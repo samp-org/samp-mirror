@@ -1,0 +1,6 @@
+/target
+/data
+mirror.db
+mirror.db-*
+*.tar.gz
+.DS_Store

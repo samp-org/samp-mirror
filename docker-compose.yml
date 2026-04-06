@@ -1,0 +1,15 @@
+services:
+  mirror:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+    command:
+      - "--node"
+      - "ws://127.0.0.1:9944"  # replace with your node URL
+      - "--db"
+      - "/data/mirror.db"
+      - "--port"
+      - "8080"
+    restart: unless-stopped
