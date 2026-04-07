@@ -74,18 +74,20 @@ async fn main() {
 
     let db = Arc::new(Mutex::new(db::Db::open(&cli.db)));
 
-    {
-        let d = db.lock().await;
-        if d.last_block() == 0 && cli.start_block > 0 {
-            d.set_last_block(cli.start_block);
-            tracing::info!("Starting from block {}", cli.start_block);
-        }
+    let last_indexed = db.lock().await.last_block();
+    if last_indexed == 0 && cli.start_block > 0 {
+        tracing::info!(
+            "Database: {} (empty; first-run start_block = {})",
+            cli.db,
+            cli.start_block
+        );
+    } else {
+        tracing::info!(
+            "Database: {} (last indexed block = {})",
+            cli.db,
+            last_indexed
+        );
     }
-    tracing::info!(
-        "Database: {} (synced to block {})",
-        cli.db,
-        db.lock().await.last_block()
-    );
 
     let state = api::AppState {
         db: db.clone(),
@@ -101,7 +103,7 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(&addr).await.expect("bind");
 
     tokio::select! {
-        _ = indexer::run(node_url, db, ss58_prefix) => {
+        _ = indexer::run(node_url, db, ss58_prefix, cli.start_block) => {
             tracing::error!("Indexer exited");
         }
         result = axum::serve(listener, app) => {

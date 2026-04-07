@@ -36,9 +36,9 @@ pub async fn fetch_chain_info(node_url: &str) -> Result<(String, u16), String> {
     Ok((chain, ss58_prefix))
 }
 
-pub async fn run(node_url: String, db: Arc<Mutex<Db>>, ss58_prefix: u16) {
+pub async fn run(node_url: String, db: Arc<Mutex<Db>>, ss58_prefix: u16, start_block: u64) {
     loop {
-        if let Err(e) = run_inner(&node_url, &db, ss58_prefix).await {
+        if let Err(e) = run_inner(&node_url, &db, ss58_prefix, start_block).await {
             tracing::error!("Indexer error: {e}. Reconnecting in 5s...");
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
@@ -50,7 +50,12 @@ enum BlockState {
     WaitingForBlock { block_num: u64 },
 }
 
-async fn run_inner(node_url: &str, db: &Arc<Mutex<Db>>, ss58_prefix: u16) -> Result<(), String> {
+async fn run_inner(
+    node_url: &str,
+    db: &Arc<Mutex<Db>>,
+    ss58_prefix: u16,
+    start_block: u64,
+) -> Result<(), String> {
     let (ws, _) = connect_async(node_url)
         .await
         .map_err(|e| format!("connect: {e}"))?;
@@ -74,15 +79,18 @@ async fn run_inner(node_url: &str, db: &Arc<Mutex<Db>>, ss58_prefix: u16) -> Res
     .map_err(|e| format!("parse: {e}"))?;
 
     let last_block = db.lock().await.last_block();
+    let resume_from = if last_block > 0 {
+        last_block + 1
+    } else {
+        start_block.max(1)
+    };
 
-    if last_block < head {
+    if resume_from <= head {
         tracing::info!(
-            "Catching up: {} -> {} ({} blocks)",
-            last_block + 1,
-            head,
-            head - last_block
+            "Catching up: {resume_from} -> {head} ({} blocks)",
+            head - resume_from + 1
         );
-        catch_up(&mut write, &mut read, db, last_block + 1, head, ss58_prefix).await?;
+        catch_up(&mut write, &mut read, db, resume_from, head, ss58_prefix).await?;
         tracing::info!("Catch-up complete at block {head}");
     }
 
@@ -326,7 +334,6 @@ async fn process_block(block: &Value, block_num: u64, db: &Arc<Mutex<Db>>, ss58_
         count += 1;
     }
 
-    db.lock().await.set_last_block(block_num);
     if count > 0 {
         tracing::info!("Block {block_num}: indexed {count} SAMP remark(s)");
     }

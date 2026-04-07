@@ -1,6 +1,6 @@
 [package]
 name = "samp-mirror"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 license = "MIT"
 description = "SAMP mirror — indexes remarks from Substrate and serves via HTTP"

@@ -60,10 +60,7 @@ impl Db {
                 channel_index  INTEGER,
                 PRIMARY KEY (block_number, ext_index)
             );
-            CREATE TABLE IF NOT EXISTS sync_state (
-                id         INTEGER PRIMARY KEY CHECK (id = 1),
-                last_block INTEGER NOT NULL
-            );
+            DROP TABLE IF EXISTS sync_state;
             CREATE INDEX IF NOT EXISTS idx_content_type ON remarks(content_type);
             CREATE INDEX IF NOT EXISTS idx_channel ON remarks(channel_block, channel_index);
             CREATE INDEX IF NOT EXISTS idx_sender ON remarks(sender);
@@ -77,21 +74,11 @@ impl Db {
     pub fn last_block(&self) -> u64 {
         self.conn
             .query_row(
-                "SELECT last_block FROM sync_state WHERE id = 1",
+                "SELECT COALESCE(MAX(block_number), 0) FROM remarks",
                 [],
-                |row| row.get(0),
+                |row| row.get::<_, i64>(0).map(|v| v as u64),
             )
             .unwrap_or(0)
-    }
-
-    pub fn set_last_block(&self, block: u64) {
-        self.conn
-            .execute(
-                "INSERT INTO sync_state (id, last_block) VALUES (1, ?1)
-             ON CONFLICT(id) DO UPDATE SET last_block = ?1",
-                params![block],
-            )
-            .expect("update sync state");
     }
 
     pub fn insert_remark(&self, r: &InsertRemark) {
