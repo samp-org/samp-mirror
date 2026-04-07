@@ -45,7 +45,6 @@ pub async fn run(node_url: String, db: Arc<Mutex<Db>>, ss58_prefix: u16) {
     }
 }
 
-// Pipeline state for a single block being fetched
 enum BlockState {
     WaitingForHash { block_num: u64 },
     WaitingForBlock { block_num: u64 },
@@ -58,7 +57,6 @@ async fn run_inner(node_url: &str, db: &Arc<Mutex<Db>>, ss58_prefix: u16) -> Res
     let (mut write, mut read) = ws.split();
     tracing::info!("Connected to {node_url}");
 
-    // Get chain head
     let req = json!({ "jsonrpc": "2.0", "id": 1, "method": "chain_getHeader", "params": [] });
     write
         .send(WsMessage::Text(req.to_string().into()))
@@ -88,7 +86,6 @@ async fn run_inner(node_url: &str, db: &Arc<Mutex<Db>>, ss58_prefix: u16) -> Res
         tracing::info!("Catch-up complete at block {head}");
     }
 
-    // Subscribe to new heads
     let sub_msg = json!({
         "jsonrpc": "2.0", "id": 1,
         "method": "chain_subscribeNewHeads", "params": []
@@ -166,9 +163,7 @@ async fn catch_up(
     let mut pipeline_depth: usize = 10;
     let mut consecutive_ok: u64 = 0;
 
-    // Maps: request_id -> BlockState
     let mut in_flight: BTreeMap<u64, BlockState> = BTreeMap::new();
-    // Maps: block_num -> ready block data (for ordered processing)
     let mut ready_blocks: BTreeMap<u64, Value> = BTreeMap::new();
 
     let mut next_to_send: u64 = start;
@@ -176,7 +171,6 @@ async fn catch_up(
     let mut request_id: u64 = 100;
 
     loop {
-        // Fill pipeline: send getBlockHash requests up to pipeline_depth
         while in_flight.len() < pipeline_depth * 2 && next_to_send <= end {
             request_id += 1;
             let req = json!({ "jsonrpc": "2.0", "id": request_id, "method": "chain_getBlockHash", "params": [next_to_send] });
@@ -193,7 +187,6 @@ async fn catch_up(
             next_to_send += 1;
         }
 
-        // Read one response
         let text = next_text(read).await?;
         let v: Value = match serde_json::from_str(&text) {
             Ok(v) => v,
@@ -202,13 +195,10 @@ async fn catch_up(
 
         let resp_id = v["id"].as_u64().unwrap_or(0);
 
-        // Check for errors
         if v.get("error").is_some() {
             tracing::warn!("RPC error for request {resp_id}: {}", v["error"]);
-            // Reduce pipeline depth on errors
             pipeline_depth = (pipeline_depth / 2).max(1);
             consecutive_ok = 0;
-            // Remove the failed request and re-queue the block
             if let Some(state) = in_flight.remove(&resp_id) {
                 let block_num = match state {
                     BlockState::WaitingForHash { block_num }
@@ -224,7 +214,6 @@ async fn catch_up(
         if let Some(state) = in_flight.remove(&resp_id) {
             match state {
                 BlockState::WaitingForHash { block_num } => {
-                    // Got hash, send getBlock
                     if let Some(hash) = v["result"].as_str() {
                         request_id += 1;
                         let req = json!({ "jsonrpc": "2.0", "id": request_id, "method": "chain_getBlock", "params": [hash] });
@@ -236,12 +225,10 @@ async fn catch_up(
                     }
                 }
                 BlockState::WaitingForBlock { block_num } => {
-                    // Got block data
                     if let Some(block) = v["result"].get("block") {
                         ready_blocks.insert(block_num, block.clone());
                         consecutive_ok += 1;
 
-                        // Adaptive depth: increase every 100 successful blocks
                         if consecutive_ok.is_multiple_of(100) && pipeline_depth < max_depth {
                             pipeline_depth = (pipeline_depth + 2).min(max_depth);
                         }
@@ -250,7 +237,6 @@ async fn catch_up(
             }
         }
 
-        // Process all consecutive ready blocks in order
         while let Some(block_data) = ready_blocks.remove(&next_to_process) {
             process_block(&block_data, next_to_process, db, ss58_prefix).await;
             if next_to_process.is_multiple_of(1000) {
@@ -309,7 +295,7 @@ async fn process_block(block: &Value, block_num: u64, db: &Arc<Mutex<Db>>, ss58_
 
         match content_type & 0x0F {
             0x00 => {
-                // Public message (0x10): recipient pubkey at bytes 1-33
+                // Public message: recipient pubkey at bytes 1-33
                 if remark.len() >= 33 {
                     let mut pub_bytes = [0u8; 32];
                     pub_bytes.copy_from_slice(&remark[1..33]);
@@ -317,7 +303,7 @@ async fn process_block(block: &Value, block_num: u64, db: &Arc<Mutex<Db>>, ss58_
                 }
             }
             0x04 => {
-                // Channel message (0x14): channel_ref at bytes 1-7
+                // Channel message: channel_ref at bytes 1-7
                 if remark.len() >= 7 {
                     channel_block = Some(u32::from_le_bytes(remark[1..5].try_into().unwrap()));
                     channel_index = Some(u16::from_le_bytes(remark[5..7].try_into().unwrap()));

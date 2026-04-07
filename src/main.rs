@@ -52,7 +52,6 @@ async fn main() {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 
-    // Handle snapshot subcommand
     if let Some(Command::Snapshot { db, output }) = &cli.command {
         let db_path = db.as_deref().unwrap_or(&cli.db);
         snapshot(db_path, output);
@@ -64,7 +63,6 @@ async fn main() {
         std::process::exit(1);
     });
 
-    // Derive chain name and SS58 prefix from the node
     let (chain, ss58_prefix) = match indexer::fetch_chain_info(&node_url).await {
         Ok(info) => info,
         Err(e) => {
@@ -76,7 +74,6 @@ async fn main() {
 
     let db = Arc::new(Mutex::new(db::Db::open(&cli.db)));
 
-    // Apply --start-block on first run only
     {
         let d = db.lock().await;
         if d.last_block() == 0 && cli.start_block > 0 {
@@ -135,7 +132,6 @@ fn snapshot(db_path: &str, output: &str) {
     }
     drop(src);
 
-    // Compress
     let db_bytes = fs::read(&tmp).expect("read snapshot");
     let file = fs::File::create(output).expect("create output");
     let enc = flate2::write::GzEncoder::new(file, flate2::Compression::default());

@@ -128,14 +128,13 @@ pub fn extract_block_timestamp(extrinsics: &[serde_json::Value]) -> u64 {
     0
 }
 
-/// Check if remark bytes are a SAMP v1 remark.
+/// Check if remark bytes are a SAMP remark.
 pub fn is_samp(remark: &[u8]) -> bool {
-    !remark.is_empty() && remark[0] & 0xF0 == 0x10
+    !remark.is_empty() && remark[0] & 0xF0 == samp::SAMP_VERSION
 }
 
 /// Convert a 32-byte account ID to SS58 address with the given prefix.
 pub fn to_ss58(pubkey: &[u8; 32], prefix: u16) -> String {
-    // SS58 encoding: prefix byte(s) + pubkey + checksum
     let mut body = Vec::new();
     if prefix < 64 {
         body.push(prefix as u8);
@@ -148,7 +147,6 @@ pub fn to_ss58(pubkey: &[u8; 32], prefix: u16) -> String {
     }
     body.extend_from_slice(pubkey);
 
-    // Blake2b-512 checksum
     use blake2::digest::{Update, VariableOutput};
     let mut hasher = blake2::Blake2bVar::new(64).unwrap();
     hasher.update(b"SS58PRE");

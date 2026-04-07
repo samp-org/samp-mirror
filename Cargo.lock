@@ -1129,7 +1129,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 [[package]]
 name = "samp"
 version = "1.0.0"
-source = "git+https://github.com/samp-org/samp#1812defd1d9f49b7392b53b07b284d88ea988888"
+source = "git+https://github.com/samp-org/samp#a38bb13c1b8e98bb2ead1fe77623779e6cf00aab"
 dependencies = [
  "chacha20poly1305",
  "curve25519-dalek",
