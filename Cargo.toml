@@ -8,7 +8,7 @@ repository = "https://github.com/samp-org/samp-mirror"
 
 [dependencies]
 samp = { path = "../../../skilaboo/rust" }
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "time"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 rustls = { version = "0.23", features = ["ring"] }
 axum = "0.8"
