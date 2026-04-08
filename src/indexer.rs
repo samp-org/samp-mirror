@@ -6,7 +6,9 @@ use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use crate::db::Db;
-use crate::parse;
+
+const SYSTEM_PALLET_IDX: u8 = 0;
+const SYSTEM_REMARK_CALL_INDICES: &[u8] = &[7, 9];
 
 /// Fetch chain name and SS58 prefix from the node via RPC.
 pub async fn fetch_chain_info(node_url: &str) -> Result<(String, u16), String> {
@@ -278,31 +280,44 @@ async fn process_block(block: &Value, block_num: u64, db: &Arc<Mutex<Db>>, ss58_
 
     let mut count = 0u32;
 
+    let prefix_typed = match samp::Ss58Prefix::new(ss58_prefix) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+
     for (ext_index, ext) in extrinsics.iter().enumerate() {
         let ext_hex = match ext.as_str() {
             Some(s) => s,
             None => continue,
         };
-        let ext_bytes = match hex::decode(ext_hex.trim_start_matches("0x")) {
+        let raw = match hex::decode(ext_hex.trim_start_matches("0x")) {
             Ok(b) => b,
             Err(_) => continue,
         };
+        let ext_bytes = samp::ExtrinsicBytes::from_bytes(raw);
 
-        let sender = match parse::extract_signer(&ext_bytes) {
+        let sender = match samp::extract_signer(&ext_bytes) {
             Some(s) => s,
             None => continue,
         };
-        let remark = match parse::extract_remark(&ext_bytes) {
-            Some(r) => r,
+        let call = match samp::extract_call(&ext_bytes) {
+            Some(c) => c,
+            None => continue,
+        };
+        if call.pallet != SYSTEM_PALLET_IDX || !SYSTEM_REMARK_CALL_INDICES.contains(&call.call) {
+            continue;
+        }
+        let remark = match samp::scale::decode_bytes(call.args) {
+            Some((r, _)) => r,
             None => continue,
         };
 
-        if !parse::is_samp(&remark) {
+        if !samp::is_samp_remark(remark) {
             continue;
         }
 
         let content_type = remark[0];
-        let sender_ss58 = parse::to_ss58(&sender, ss58_prefix);
+        let sender_ss58 = sender.to_ss58(prefix_typed).as_str().to_string();
 
         let mut channel_block: Option<u32> = None;
         let mut channel_index: Option<u16> = None;
