@@ -1,13 +1,18 @@
 services:
   mirror:
-    build: .
+    build:
+      context: .
+      additional_contexts:
+        # Temporary: local samp Rust SDK until v1.1.0 ships as a git rev.
+        # Drop this block (and revert Cargo.toml's path dep to a git rev) on release.
+        samp: ../../rust
     ports:
       - "8080:8080"
     volumes:
       - ./data:/data
     command:
       - "--node"
-      - "ws://127.0.0.1:9944"  # replace with your node URL
+      - "ws://host.docker.internal:9944"
       - "--db"
       - "/data/mirror.db"
       - "--port"
