@@ -94,40 +94,6 @@ pub fn extract_remark(ext_bytes: &[u8]) -> Option<Vec<u8>> {
     Some(payload[offset..offset + remark_len].to_vec())
 }
 
-/// Extract block timestamp (milliseconds) from the timestamp inherent.
-/// The timestamp inherent is the first unsigned extrinsic in a Substrate block.
-pub fn extract_block_timestamp(extrinsics: &[serde_json::Value]) -> u64 {
-    for ext in extrinsics {
-        let ext_hex = match ext.as_str() {
-            Some(s) => s,
-            None => continue,
-        };
-        let ext_bytes = match hex::decode(ext_hex.trim_start_matches("0x")) {
-            Ok(b) => b,
-            Err(_) => continue,
-        };
-        let (_, prefix_len) = match decode_compact(&ext_bytes) {
-            Some(v) => v,
-            None => continue,
-        };
-        let payload = &ext_bytes[prefix_len..];
-        // Unsigned: bit 7 clear
-        if payload.is_empty() || payload[0] & 0x80 != 0 {
-            continue;
-        }
-        if payload.len() < 4 {
-            continue;
-        }
-        // Skip version(1) + pallet(1) + call(1), read compact u64
-        if let Some((ts_ms, _)) = decode_compact(&payload[3..]) {
-            if ts_ms > 1_000_000_000_000 {
-                return ts_ms;
-            }
-        }
-    }
-    0
-}
-
 /// Check if remark bytes are a SAMP remark.
 pub fn is_samp(remark: &[u8]) -> bool {
     !remark.is_empty() && remark[0] & 0xF0 == samp::SAMP_VERSION

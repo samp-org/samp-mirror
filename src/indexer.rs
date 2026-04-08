@@ -267,7 +267,6 @@ async fn process_block(block: &Value, block_num: u64, db: &Arc<Mutex<Db>>, ss58_
         None => return,
     };
 
-    let timestamp_ms = parse::extract_block_timestamp(extrinsics);
     let mut count = 0u32;
 
     for (ext_index, ext) in extrinsics.iter().enumerate() {
@@ -295,42 +294,26 @@ async fn process_block(block: &Value, block_num: u64, db: &Arc<Mutex<Db>>, ss58_
 
         let content_type = remark[0];
         let sender_ss58 = parse::to_ss58(&sender, ss58_prefix);
-        let remark_hex = hex::encode(&remark);
 
-        let mut recipient: Option<String> = None;
         let mut channel_block: Option<u32> = None;
         let mut channel_index: Option<u16> = None;
-
-        match content_type & 0x0F {
-            0x00 => {
-                // Public message: recipient pubkey at bytes 1-33
-                if remark.len() >= 33 {
-                    let mut pub_bytes = [0u8; 32];
-                    pub_bytes.copy_from_slice(&remark[1..33]);
-                    recipient = Some(parse::to_ss58(&pub_bytes, ss58_prefix));
-                }
-            }
-            0x04 => {
-                // Channel message: channel_ref at bytes 1-7
-                if remark.len() >= 7 {
-                    channel_block = Some(u32::from_le_bytes(remark[1..5].try_into().unwrap()));
-                    channel_index = Some(u16::from_le_bytes(remark[5..7].try_into().unwrap()));
-                }
-            }
-            _ => {}
+        if content_type & 0x0F == 0x04 && remark.len() >= 7 {
+            channel_block = Some(u32::from_le_bytes(remark[1..5].try_into().unwrap()));
+            channel_index = Some(u16::from_le_bytes(remark[5..7].try_into().unwrap()));
         }
 
-        db.lock().await.insert_remark(&crate::db::InsertRemark {
+        let db = db.lock().await;
+        db.insert_remark(&crate::db::InsertRemark {
             block_number: block_num as u32,
             ext_index: ext_index as u16,
             sender: &sender_ss58,
-            timestamp_ms,
             content_type,
-            remark_hex: &remark_hex,
-            recipient: recipient.as_deref(),
             channel_block,
             channel_index,
         });
+        if content_type & 0x0F == 0x03 {
+            db.insert_channel(block_num as u32, ext_index as u16);
+        }
         count += 1;
     }
 
