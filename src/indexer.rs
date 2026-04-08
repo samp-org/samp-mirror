@@ -267,6 +267,15 @@ async fn process_block(block: &Value, block_num: u64, db: &Arc<Mutex<Db>>, ss58_
         None => return,
     };
 
+    let block_number_typed = match samp::BlockNumber::try_from_u64(block_num) {
+        Ok(n) => n,
+        Err(_) => {
+            tracing::error!("Block {block_num} exceeds u32::MAX, skipping");
+            return;
+        }
+    };
+    let block_number_u32 = block_number_typed.get();
+
     let mut count = 0u32;
 
     for (ext_index, ext) in extrinsics.iter().enumerate() {
@@ -302,17 +311,21 @@ async fn process_block(block: &Value, block_num: u64, db: &Arc<Mutex<Db>>, ss58_
             channel_index = Some(u16::from_le_bytes(remark[5..7].try_into().unwrap()));
         }
 
+        let ext_index_u16 = match samp::ExtIndex::try_from_usize(ext_index) {
+            Ok(i) => i.get(),
+            Err(_) => continue,
+        };
         let db = db.lock().await;
         db.insert_remark(&crate::db::InsertRemark {
-            block_number: block_num as u32,
-            ext_index: ext_index as u16,
+            block_number: block_number_u32,
+            ext_index: ext_index_u16,
             sender: &sender_ss58,
             content_type,
             channel_block,
             channel_index,
         });
         if content_type & 0x0F == 0x03 {
-            db.insert_channel(block_num as u32, ext_index as u16);
+            db.insert_channel(block_number_u32, ext_index_u16);
         }
         count += 1;
     }
