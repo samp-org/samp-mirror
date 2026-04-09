@@ -304,10 +304,12 @@ async fn process_block(block: &Value, block_num: u64, db: &Arc<Mutex<Db>>, ss58_
             Some(c) => c,
             None => continue,
         };
-        if call.pallet != SYSTEM_PALLET_IDX || !SYSTEM_REMARK_CALL_INDICES.contains(&call.call) {
+        if call.pallet().get() != SYSTEM_PALLET_IDX
+            || !SYSTEM_REMARK_CALL_INDICES.contains(&call.call().get())
+        {
             continue;
         }
-        let remark = match samp::scale::decode_bytes(call.args) {
+        let remark = match samp::scale::decode_bytes(call.args().as_bytes()) {
             Some((r, _)) => r,
             None => continue,
         };
