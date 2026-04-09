@@ -1,4 +1,4 @@
-# samp-mirror
+# SAMP Mirror
 
 Indexes [SAMP](https://github.com/samp-org/samp) remarks from a Substrate blockchain and serves them via HTTP API. Works with any Substrate chain that has `system.remark_with_event`.
 
