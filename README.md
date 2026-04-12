@@ -1,15 +1,32 @@
-# samp-mirror
+<h1 align="center">SAMP Mirror</h1>
 
-Indexes [SAMP](https://github.com/samp-org/samp) remarks from a Substrate blockchain and serves them via HTTP API. Works with any Substrate chain that has `system.remark_with_event`.
+<p align="center">
+  <strong>Index and serve SAMP remarks from any Substrate chain.</strong>
+</p>
+
+<p align="center">
+  <a href="https://codecov.io/gh/samp-org/mirror-template"><img src="https://codecov.io/gh/samp-org/mirror-template/graph/badge.svg" alt="codecov" /></a>
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a> •
+  <a href="#cli">CLI</a> •
+  <a href="#api">API</a> •
+  <a href="#docker">Docker</a>
+</p>
+
+---
+
+Connects to a Substrate node, indexes all [SAMP](https://github.com/samp-org/samp) remarks into SQLite, and serves them via HTTP API. Clients use mirrors to discover messages without scanning the full chain. Mirrors never see decrypted content. Clients verify all data against the chain.
 
 ## Quick start
 
 ```
 cargo build --release
-./target/release/samp-mirror --node <your-substrate-node-ws-url>
+./target/release/samp-mirror --node <node-ws-url>
 ```
 
-The mirror connects to the node, detects the chain name and SS58 prefix, catches up on historical blocks, then subscribes to new finalized blocks. Remarks are stored in a local SQLite database.
+The mirror detects the chain name and SS58 prefix, catches up on historical blocks, then subscribes to new finalized blocks.
 
 ## CLI
 
@@ -26,7 +43,7 @@ samp-mirror --node <URL> [--db <PATH>] [--port <PORT>] [--start-block <N>]
 
 ### Snapshot
 
-Exports the database as a compressed `.tar.gz` archive.
+Export the database as a compressed archive:
 
 ```
 samp-mirror snapshot --db mirror.db --output snapshot.tar.gz
@@ -40,7 +57,7 @@ All list endpoints accept `?after=N` to return only remarks from blocks after N.
 
 ```json
 {
-  "chain": "MyChain",
+  "chain": "Bittensor",
   "ss58_prefix": 42,
   "synced_to": 2081,
   "version": "2.0.0"
@@ -49,7 +66,7 @@ All list endpoints accept `?after=N` to return only remarks from blocks after N.
 
 ### `GET /v1/channels`
 
-All discovered channel creation remarks (`0x13`).
+All channel creation remarks (`0x13`).
 
 ```json
 [
@@ -100,7 +117,7 @@ Content types: `0x10` (public), `0x11` (encrypted), `0x12` (thread), `0x13` (cha
 
 ### `GET /v1/remarks?sender=5Grw...&after=0`
 
-Remarks by sender SS58 address. Same response format as above.
+Remarks by sender address. Same response format.
 
 ## Docker
 
@@ -121,26 +138,4 @@ Edit `ecosystem.config.js` to set your node URL.
 
 ## License
 
-```
-MIT License
-
-Copyright (c) 2025 Maciej Kula
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
+MIT. See [LICENSE](LICENSE).
