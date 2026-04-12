@@ -43,7 +43,7 @@ All list endpoints accept `?after=N` to return only remarks from blocks after N.
   "chain": "MyChain",
   "ss58_prefix": 42,
   "synced_to": 2081,
-  "version": "1.0.0"
+  "version": "2.0.0"
 }
 ```
 
