@@ -1165,9 +1165,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
-name = "samp"
+name = "samp-core"
 version = "1.1.0"
-source = "git+https://github.com/samp-org/samp?tag=v1.1#03dbecf1b84625e9c47489027203c14c634f225a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "daa82b7de59695a56a15c9f9a7c6ec5cc58c16b2cd16dcb257ff0b347d142f22"
 dependencies = [
  "blake2",
  "chacha20poly1305",
@@ -1193,7 +1194,7 @@ dependencies = [
  "hex",
  "rusqlite",
  "rustls",
- "samp",
+ "samp-core",
  "serde",
  "serde_json",
  "tar",

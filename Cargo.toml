@@ -7,7 +7,7 @@ description = "SAMP mirror — indexes remarks from Substrate and serves via HTT
 repository = "https://github.com/samp-org/samp-mirror"
 
 [dependencies]
-samp = { git = "https://github.com/samp-org/samp", tag = "v1.1", subdirectory = "rust" }
+samp-core = "1.1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "time"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 rustls = { version = "0.23", features = ["ring"] }
