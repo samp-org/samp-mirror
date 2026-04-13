@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://codecov.io/gh/samp-org/mirror-template"><img src="https://codecov.io/gh/samp-org/mirror-template/graph/badge.svg" alt="codecov" /></a>
+  <a href="https://codecov.io/gh/samp-org/samp-mirror"><img src="https://codecov.io/gh/samp-org/samp-mirror/graph/badge.svg" alt="codecov" /></a>
 </p>
 
 <p align="center">
