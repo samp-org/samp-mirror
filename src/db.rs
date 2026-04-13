@@ -8,31 +8,15 @@ pub struct InsertRemark<'a> {
     pub block_number: u32,
     pub ext_index: u16,
     pub sender: &'a str,
-    pub timestamp_ms: u64,
     pub content_type: u8,
-    pub remark_hex: &'a str,
-    pub recipient: Option<&'a str>,
     pub channel_block: Option<u32>,
     pub channel_index: Option<u16>,
 }
 
 #[derive(serde::Serialize)]
-pub struct RemarkRow {
+pub struct Hint {
     pub block: u32,
     pub index: u16,
-    pub sender: String,
-    pub timestamp: u64,
-    pub remark: String,
-}
-
-#[derive(serde::Serialize)]
-pub struct ChannelRow {
-    pub block: u32,
-    pub index: u16,
-    pub creator: String,
-    pub name: String,
-    pub description: String,
-    pub timestamp: u64,
 }
 
 impl Db {
@@ -51,13 +35,15 @@ impl Db {
             CREATE TABLE IF NOT EXISTS remarks (
                 block_number   INTEGER NOT NULL,
                 ext_index      INTEGER NOT NULL,
-                sender         TEXT NOT NULL,
-                timestamp_ms   INTEGER NOT NULL,
                 content_type   INTEGER NOT NULL,
-                remark_hex     TEXT NOT NULL,
-                recipient      TEXT,
+                sender         TEXT NOT NULL,
                 channel_block  INTEGER,
                 channel_index  INTEGER,
+                PRIMARY KEY (block_number, ext_index)
+            );
+            CREATE TABLE IF NOT EXISTS channels (
+                block_number   INTEGER NOT NULL,
+                ext_index      INTEGER NOT NULL,
                 PRIMARY KEY (block_number, ext_index)
             );
             DROP TABLE IF EXISTS sync_state;
@@ -84,48 +70,35 @@ impl Db {
     pub fn insert_remark(&self, r: &InsertRemark) {
         let _ = self.conn.execute(
             "INSERT OR IGNORE INTO remarks
-             (block_number, ext_index, sender, timestamp_ms, content_type, remark_hex,
-              recipient, channel_block, channel_index)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             (block_number, ext_index, content_type, sender, channel_block, channel_index)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 r.block_number,
                 r.ext_index,
-                r.sender,
-                r.timestamp_ms,
                 r.content_type,
-                r.remark_hex,
-                r.recipient,
+                r.sender,
                 r.channel_block,
                 r.channel_index,
             ],
         );
     }
 
-    pub fn channels(&self) -> Vec<ChannelRow> {
+    pub fn insert_channel(&self, block_number: u32, ext_index: u16) {
+        let _ = self.conn.execute(
+            "INSERT OR IGNORE INTO channels (block_number, ext_index) VALUES (?1, ?2)",
+            params![block_number, ext_index],
+        );
+    }
+
+    pub fn channels(&self) -> Vec<Hint> {
         let mut stmt = self
             .conn
-            .prepare(
-                "SELECT block_number, ext_index, sender, timestamp_ms, remark_hex
-             FROM remarks WHERE content_type = 19 ORDER BY block_number, ext_index",
-            )
+            .prepare("SELECT block_number, ext_index FROM channels ORDER BY block_number, ext_index")
             .unwrap();
         stmt.query_map([], |row| {
-            let remark_hex: String = row.get(4)?;
-            let remark_bytes = hex::decode(&remark_hex).unwrap_or_default();
-            let (name, description) = if remark_bytes.len() > 1 {
-                samp::decode_channel_create(&remark_bytes[1..])
-                    .map(|(n, d)| (n.to_string(), d.to_string()))
-                    .unwrap_or_default()
-            } else {
-                (String::new(), String::new())
-            };
-            Ok(ChannelRow {
+            Ok(Hint {
                 block: row.get(0)?,
                 index: row.get::<_, u32>(1)? as u16,
-                creator: row.get(2)?,
-                name,
-                description,
-                timestamp: row.get::<_, u64>(3)? / 1000,
             })
         })
         .unwrap()
@@ -133,22 +106,19 @@ impl Db {
         .collect()
     }
 
-    pub fn channel_messages(&self, ch_block: u32, ch_index: u16, after: u64) -> Vec<RemarkRow> {
+    pub fn channel_messages(&self, ch_block: u32, ch_index: u16, after: u64) -> Vec<Hint> {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT block_number, ext_index, sender, timestamp_ms, remark_hex
+                "SELECT block_number, ext_index
              FROM remarks WHERE content_type = 20 AND channel_block = ?1 AND channel_index = ?2
              AND block_number > ?3 ORDER BY block_number, ext_index",
             )
             .unwrap();
         stmt.query_map(params![ch_block, ch_index, after], |row| {
-            Ok(RemarkRow {
+            Ok(Hint {
                 block: row.get(0)?,
                 index: row.get::<_, u32>(1)? as u16,
-                sender: row.get(2)?,
-                timestamp: row.get::<_, u64>(3)? / 1000,
-                remark: row.get(4)?,
             })
         })
         .unwrap()
@@ -156,22 +126,19 @@ impl Db {
         .collect()
     }
 
-    pub fn remarks_by_type(&self, content_type: u8, after: u64) -> Vec<RemarkRow> {
+    pub fn remarks_by_type(&self, content_type: u8, after: u64) -> Vec<Hint> {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT block_number, ext_index, sender, timestamp_ms, remark_hex
+                "SELECT block_number, ext_index
              FROM remarks WHERE content_type = ?1 AND block_number > ?2
              ORDER BY block_number, ext_index",
             )
             .unwrap();
         stmt.query_map(params![content_type, after], |row| {
-            Ok(RemarkRow {
+            Ok(Hint {
                 block: row.get(0)?,
                 index: row.get::<_, u32>(1)? as u16,
-                sender: row.get(2)?,
-                timestamp: row.get::<_, u64>(3)? / 1000,
-                remark: row.get(4)?,
             })
         })
         .unwrap()
@@ -179,22 +146,19 @@ impl Db {
         .collect()
     }
 
-    pub fn remarks_by_sender(&self, sender: &str, after: u64) -> Vec<RemarkRow> {
+    pub fn remarks_by_sender(&self, sender: &str, after: u64) -> Vec<Hint> {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT block_number, ext_index, sender, timestamp_ms, remark_hex
+                "SELECT block_number, ext_index
              FROM remarks WHERE sender = ?1 AND block_number > ?2
              ORDER BY block_number, ext_index",
             )
             .unwrap();
         stmt.query_map(params![sender, after], |row| {
-            Ok(RemarkRow {
+            Ok(Hint {
                 block: row.get(0)?,
                 index: row.get::<_, u32>(1)? as u16,
-                sender: row.get(2)?,
-                timestamp: row.get::<_, u64>(3)? / 1000,
-                remark: row.get(4)?,
             })
         })
         .unwrap()

@@ -6,7 +6,9 @@ use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use crate::db::Db;
-use crate::parse;
+
+const SYSTEM_PALLET_IDX: u8 = 0;
+const SYSTEM_REMARK_CALL_INDICES: &[u8] = &[7, 9];
 
 /// Fetch chain name and SS58 prefix from the node via RPC.
 pub async fn fetch_chain_info(node_url: &str) -> Result<(String, u16), String> {
@@ -267,70 +269,81 @@ async fn process_block(block: &Value, block_num: u64, db: &Arc<Mutex<Db>>, ss58_
         None => return,
     };
 
-    let timestamp_ms = parse::extract_block_timestamp(extrinsics);
+    let block_number_typed = match samp::BlockNumber::try_from_u64(block_num) {
+        Ok(n) => n,
+        Err(_) => {
+            tracing::error!("Block {block_num} exceeds u32::MAX, skipping");
+            return;
+        }
+    };
+    let block_number_u32 = block_number_typed.get();
+
     let mut count = 0u32;
+
+    let prefix_typed = match samp::Ss58Prefix::new(ss58_prefix) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
 
     for (ext_index, ext) in extrinsics.iter().enumerate() {
         let ext_hex = match ext.as_str() {
             Some(s) => s,
             None => continue,
         };
-        let ext_bytes = match hex::decode(ext_hex.trim_start_matches("0x")) {
+        let raw = match hex::decode(ext_hex.trim_start_matches("0x")) {
             Ok(b) => b,
             Err(_) => continue,
         };
+        let ext_bytes = samp::ExtrinsicBytes::from_bytes(raw);
 
-        let sender = match parse::extract_signer(&ext_bytes) {
+        let sender = match samp::extract_signer(&ext_bytes) {
             Some(s) => s,
             None => continue,
         };
-        let remark = match parse::extract_remark(&ext_bytes) {
-            Some(r) => r,
+        let call = match samp::extract_call(&ext_bytes) {
+            Some(c) => c,
+            None => continue,
+        };
+        if call.pallet().get() != SYSTEM_PALLET_IDX
+            || !SYSTEM_REMARK_CALL_INDICES.contains(&call.call().get())
+        {
+            continue;
+        }
+        let remark = match samp::scale::decode_bytes(call.args().as_bytes()) {
+            Some((r, _)) => r,
             None => continue,
         };
 
-        if !parse::is_samp(&remark) {
+        if !samp::is_samp_remark(remark) {
             continue;
         }
 
         let content_type = remark[0];
-        let sender_ss58 = parse::to_ss58(&sender, ss58_prefix);
-        let remark_hex = hex::encode(&remark);
+        let sender_ss58 = sender.to_ss58(prefix_typed).as_str().to_string();
 
-        let mut recipient: Option<String> = None;
         let mut channel_block: Option<u32> = None;
         let mut channel_index: Option<u16> = None;
-
-        match content_type & 0x0F {
-            0x00 => {
-                // Public message: recipient pubkey at bytes 1-33
-                if remark.len() >= 33 {
-                    let mut pub_bytes = [0u8; 32];
-                    pub_bytes.copy_from_slice(&remark[1..33]);
-                    recipient = Some(parse::to_ss58(&pub_bytes, ss58_prefix));
-                }
-            }
-            0x04 => {
-                // Channel message: channel_ref at bytes 1-7
-                if remark.len() >= 7 {
-                    channel_block = Some(u32::from_le_bytes(remark[1..5].try_into().unwrap()));
-                    channel_index = Some(u16::from_le_bytes(remark[5..7].try_into().unwrap()));
-                }
-            }
-            _ => {}
+        if content_type & 0x0F == 0x04 && remark.len() >= 7 {
+            channel_block = Some(u32::from_le_bytes(remark[1..5].try_into().unwrap()));
+            channel_index = Some(u16::from_le_bytes(remark[5..7].try_into().unwrap()));
         }
 
-        db.lock().await.insert_remark(&crate::db::InsertRemark {
-            block_number: block_num as u32,
-            ext_index: ext_index as u16,
+        let ext_index_u16 = match samp::ExtIndex::try_from_usize(ext_index) {
+            Ok(i) => i.get(),
+            Err(_) => continue,
+        };
+        let db = db.lock().await;
+        db.insert_remark(&crate::db::InsertRemark {
+            block_number: block_number_u32,
+            ext_index: ext_index_u16,
             sender: &sender_ss58,
-            timestamp_ms,
             content_type,
-            remark_hex: &remark_hex,
-            recipient: recipient.as_deref(),
             channel_block,
             channel_index,
         });
+        if content_type & 0x0F == 0x03 {
+            db.insert_channel(block_number_u32, ext_index_u16);
+        }
         count += 1;
     }
 

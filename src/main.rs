@@ -1,7 +1,6 @@
 mod api;
 mod db;
 mod indexer;
-mod parse;
 
 use clap::{Parser, Subcommand};
 use std::sync::Arc;
