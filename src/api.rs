@@ -88,7 +88,7 @@ async fn remarks(
     Err(StatusCode::BAD_REQUEST)
 }
 
-fn parse_content_type(s: &str) -> Option<u8> {
+pub fn parse_content_type(s: &str) -> Option<u8> {
     if let Some(hex) = s.strip_prefix("0x") {
         u8::from_str_radix(hex, 16).ok()
     } else {

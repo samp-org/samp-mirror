@@ -263,7 +263,7 @@ async fn catch_up(
     Ok(())
 }
 
-async fn process_block(block: &Value, block_num: u64, db: &Arc<Mutex<Db>>, ss58_prefix: u16) {
+pub async fn process_block(block: &Value, block_num: u64, db: &Arc<Mutex<Db>>, ss58_prefix: u16) {
     let extrinsics = match block["extrinsics"].as_array() {
         Some(exts) => exts,
         None => return,
