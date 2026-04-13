@@ -1161,6 +1161,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 [[package]]
 name = "samp"
 version = "1.1.0"
+source = "git+https://github.com/samp-org/samp?tag=v1.1#03dbecf1b84625e9c47489027203c14c634f225a"
 dependencies = [
  "blake2",
  "chacha20poly1305",
