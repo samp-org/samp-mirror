@@ -10,7 +10,12 @@ fn temp_db() -> (Arc<Mutex<Db>>, tempfile::TempDir) {
     (Arc::new(Mutex::new(db)), dir)
 }
 
-fn build_samp_extrinsic(pubkey: &samp::Pubkey, remark_payload: &[u8]) -> String {
+fn build_extrinsic(
+    pubkey: &samp::Pubkey,
+    pallet: u8,
+    call: u8,
+    remark_payload: &[u8],
+) -> String {
     let mut call_args = Vec::new();
     samp::encode_compact(remark_payload.len() as u64, &mut call_args);
     call_args.extend_from_slice(remark_payload);
@@ -22,8 +27,8 @@ fn build_samp_extrinsic(pubkey: &samp::Pubkey, remark_payload: &[u8]) -> String 
     );
 
     let ext = samp::build_signed_extrinsic(
-        samp::PalletIdx::new(0),   // System pallet
-        samp::CallIdx::new(7),     // system.remark
+        samp::PalletIdx::new(pallet),
+        samp::CallIdx::new(call),
         &samp::CallArgs::from_bytes(call_args),
         pubkey,
         |_| samp::Signature::from_bytes([0u8; 64]),
@@ -33,6 +38,10 @@ fn build_samp_extrinsic(pubkey: &samp::Pubkey, remark_payload: &[u8]) -> String 
     .unwrap();
 
     format!("0x{}", hex::encode(ext.as_bytes()))
+}
+
+fn build_samp_extrinsic(pubkey: &samp::Pubkey, remark_payload: &[u8]) -> String {
+    build_extrinsic(pubkey, 0, 7, remark_payload)
 }
 
 fn test_pubkey() -> samp::Pubkey {
@@ -159,4 +168,99 @@ async fn test_process_block_channel_message() {
     let msgs = db_lock.channel_messages(100, 2, 0);
     assert_eq!(msgs.len(), 1);
     assert_eq!(msgs[0].block, 300);
+}
+
+#[tokio::test]
+async fn test_process_block_no_extrinsics_field() {
+    let (db, _dir) = temp_db();
+    let block = json!({"header": {"number": "0x01"}});
+    samp_mirror::indexer::process_block(&block, 1, &db, 42).await;
+    assert_eq!(db.lock().await.last_block(), 0);
+}
+
+#[tokio::test]
+async fn test_process_block_exceeds_u32_max() {
+    let (db, _dir) = temp_db();
+    let block = json!({"extrinsics": ["0x00"]});
+    samp_mirror::indexer::process_block(&block, u64::MAX, &db, 42).await;
+    assert_eq!(db.lock().await.last_block(), 0);
+}
+
+#[tokio::test]
+async fn test_process_block_invalid_hex_extrinsic() {
+    let (db, _dir) = temp_db();
+    let block = json!({"extrinsics": ["not-valid-hex"]});
+    samp_mirror::indexer::process_block(&block, 1, &db, 42).await;
+    assert_eq!(db.lock().await.last_block(), 0);
+}
+
+#[tokio::test]
+async fn test_process_block_non_string_extrinsic() {
+    let (db, _dir) = temp_db();
+    let block = json!({"extrinsics": [42, null, true]});
+    samp_mirror::indexer::process_block(&block, 1, &db, 42).await;
+    assert_eq!(db.lock().await.last_block(), 0);
+}
+
+#[tokio::test]
+async fn test_process_block_wrong_pallet() {
+    let (db, _dir) = temp_db();
+    let pubkey = test_pubkey();
+    let mut remark = vec![0x10];
+    remark.extend_from_slice(&[0u8; 32]);
+    remark.extend_from_slice(b"wrong pallet");
+    let ext_hex = build_extrinsic(&pubkey, 5, 7, &remark);
+    let block = json!({"extrinsics": [ext_hex]});
+    samp_mirror::indexer::process_block(&block, 1, &db, 42).await;
+    assert_eq!(db.lock().await.last_block(), 0);
+}
+
+#[tokio::test]
+async fn test_process_block_wrong_call_index() {
+    let (db, _dir) = temp_db();
+    let pubkey = test_pubkey();
+    let mut remark = vec![0x10];
+    remark.extend_from_slice(&[0u8; 32]);
+    remark.extend_from_slice(b"wrong call");
+    let ext_hex = build_extrinsic(&pubkey, 0, 3, &remark);
+    let block = json!({"extrinsics": [ext_hex]});
+    samp_mirror::indexer::process_block(&block, 1, &db, 42).await;
+    assert_eq!(db.lock().await.last_block(), 0);
+}
+
+#[tokio::test]
+async fn test_process_block_empty_extrinsics() {
+    let (db, _dir) = temp_db();
+    let block = json!({"extrinsics": []});
+    samp_mirror::indexer::process_block(&block, 1, &db, 42).await;
+    assert_eq!(db.lock().await.last_block(), 0);
+}
+
+#[tokio::test]
+async fn test_process_block_invalid_ss58_prefix() {
+    let (db, _dir) = temp_db();
+    let pubkey = test_pubkey();
+    let mut remark = vec![0x10];
+    remark.extend_from_slice(&[0u8; 32]);
+    remark.extend_from_slice(b"bad prefix");
+    let ext_hex = build_samp_extrinsic(&pubkey, &remark);
+    let block = json!({"extrinsics": [ext_hex]});
+    samp_mirror::indexer::process_block(&block, 1, &db, 16384).await;
+    assert_eq!(db.lock().await.last_block(), 0);
+}
+
+#[tokio::test]
+async fn test_process_block_remark_with_event() {
+    let (db, _dir) = temp_db();
+    let pubkey = test_pubkey();
+    let mut remark = vec![0x10];
+    remark.extend_from_slice(&[0u8; 32]);
+    remark.extend_from_slice(b"via remark_with_event");
+    // call index 9 = remark_with_event
+    let ext_hex = build_extrinsic(&pubkey, 0, 9, &remark);
+    let block = json!({"extrinsics": [ext_hex]});
+    samp_mirror::indexer::process_block(&block, 50, &db, 42).await;
+    let db_lock = db.lock().await;
+    assert_eq!(db_lock.remarks_by_type(0x10, 0).len(), 1);
+    assert_eq!(db_lock.remarks_by_type(0x10, 0)[0].block, 50);
 }

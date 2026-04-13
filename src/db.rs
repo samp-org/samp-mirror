@@ -166,3 +166,40 @@ impl Db {
         .collect()
     }
 }
+
+pub fn snapshot(db_path: &str, output: &str) -> Result<u64, String> {
+    use std::fs;
+
+    if !std::path::Path::new(db_path).exists() {
+        return Err(format!("Database not found: {db_path}"));
+    }
+
+    let src = rusqlite::Connection::open(db_path).map_err(|e| format!("open source: {e}"))?;
+    let tmp = format!("{db_path}.snapshot");
+    {
+        let mut dst =
+            rusqlite::Connection::open(&tmp).map_err(|e| format!("open dest: {e}"))?;
+        let backup = rusqlite::backup::Backup::new(&src, &mut dst)
+            .map_err(|e| format!("init backup: {e}"))?;
+        backup
+            .run_to_completion(100, std::time::Duration::from_millis(10), None)
+            .map_err(|e| format!("backup: {e}"))?;
+    }
+    drop(src);
+
+    let db_bytes = fs::read(&tmp).map_err(|e| format!("read snapshot: {e}"))?;
+    let file = fs::File::create(output).map_err(|e| format!("create output: {e}"))?;
+    let enc = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+    let mut tar = tar::Builder::new(enc);
+    let mut header = tar::Header::new_gnu();
+    header.set_size(db_bytes.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+    tar.append_data(&mut header, "mirror.db", &db_bytes[..])
+        .map_err(|e| format!("write tar: {e}"))?;
+    tar.finish().map_err(|e| format!("finish tar: {e}"))?;
+
+    fs::remove_file(&tmp).ok();
+    let size = fs::metadata(output).map(|m| m.len()).unwrap_or(0);
+    Ok(size)
+}

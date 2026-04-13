@@ -52,7 +52,7 @@ enum BlockState {
     WaitingForBlock { block_num: u64 },
 }
 
-async fn run_inner(
+pub async fn run_inner(
     node_url: &str,
     db: &Arc<Mutex<Db>>,
     ss58_prefix: u16,
