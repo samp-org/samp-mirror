@@ -1,11 +1,6 @@
 services:
   mirror:
-    build:
-      context: .
-      additional_contexts:
-        # Temporary: local samp Rust SDK until v1.1.0 ships as a git rev.
-        # Drop this block (and revert Cargo.toml's path dep to a git rev) on release.
-        samp: ../../rust
+    build: .
     ports:
       - "8080:8080"
     volumes:
