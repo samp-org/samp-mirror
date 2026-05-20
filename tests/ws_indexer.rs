@@ -1,10 +1,10 @@
 use futures_util::{SinkExt, StreamExt};
 use samp_mirror::db::{Db, InsertRemark};
 use samp_mirror::indexer::RemarkCallIds;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -293,7 +293,7 @@ async fn start_mock_node(config: MockNodeConfig) -> MockNode {
 async fn wait_for_block(db: &Arc<Mutex<Db>>, target: u64, timeout_secs: u64) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
     loop {
-        if db.lock().await.last_block() >= target {
+        if db.lock().await.last_block().unwrap() >= target {
             return;
         }
         assert!(

@@ -1,8 +1,8 @@
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     http::StatusCode,
     routing::get,
-    Json, Router,
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -43,14 +43,19 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let synced_to = state.db.lock().await.last_block();
-    Json(serde_json::json!({
+async fn health(State(state): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
+    let synced_to = state
+        .db
+        .lock()
+        .await
+        .last_block()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({
         "chain": state.chain,
         "ss58_prefix": state.ss58_prefix,
         "synced_to": synced_to,
         "version": state.version,
-    }))
+    })))
 }
 
 async fn channels(State(state): State<AppState>) -> Json<serde_json::Value> {

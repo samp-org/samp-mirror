@@ -1,4 +1,4 @@
-use samp_mirror::db::{Db, InsertRemark};
+use samp_mirror::db::{Db, IndexedRemark, InsertRemark};
 
 fn temp_db() -> (Db, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
@@ -15,7 +15,7 @@ fn test_open_creates_tables() {
 #[test]
 fn test_last_block_empty() {
     let (db, _dir) = temp_db();
-    assert_eq!(db.last_block(), 0);
+    assert_eq!(db.last_block().unwrap(), 0);
 }
 
 #[test]
@@ -139,17 +139,63 @@ fn test_channel_messages_after_filter() {
 
 #[test]
 fn test_last_block_after_inserts() {
-    let (db, _dir) = temp_db();
+    let (mut db, _dir) = temp_db();
     let sender = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
     for (block, idx) in [(5, 0), (10, 0), (15, 0)] {
-        db.insert_remark(&InsertRemark {
-            block_number: block,
-            ext_index: idx,
-            sender,
-            content_type: 0x10,
-            channel_block: None,
-            channel_index: None,
-        });
+        db.insert_indexed_block(
+            block,
+            &[IndexedRemark {
+                block_number: block,
+                ext_index: idx,
+                sender: sender.to_string(),
+                content_type: 0x10,
+                channel_block: None,
+                channel_index: None,
+            }],
+            &[],
+        )
+        .unwrap();
     }
-    assert_eq!(db.last_block(), 15);
+    assert_eq!(db.last_block().unwrap(), 15);
+}
+
+#[test]
+fn test_empty_block_advances_last_block() {
+    let (mut db, _dir) = temp_db();
+    db.insert_indexed_block(25, &[], &[]).unwrap();
+    assert_eq!(db.last_block().unwrap(), 25);
+}
+
+#[test]
+fn test_sync_state_migrates_from_existing_remarks() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.db");
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE remarks (
+                block_number   INTEGER NOT NULL,
+                ext_index      INTEGER NOT NULL,
+                content_type   INTEGER NOT NULL,
+                sender         TEXT NOT NULL,
+                channel_block  INTEGER,
+                channel_index  INTEGER,
+                PRIMARY KEY (block_number, ext_index)
+            );
+            CREATE TABLE channels (
+                block_number   INTEGER NOT NULL,
+                ext_index      INTEGER NOT NULL,
+                PRIMARY KEY (block_number, ext_index)
+            );
+            INSERT INTO remarks
+              (block_number, ext_index, content_type, sender, channel_block, channel_index)
+            VALUES (42, 0, 16, 'sender', NULL, NULL);
+            ",
+        )
+        .unwrap();
+    }
+
+    let db = Db::open(path.to_str().unwrap());
+    assert_eq!(db.last_block().unwrap(), 42);
 }
