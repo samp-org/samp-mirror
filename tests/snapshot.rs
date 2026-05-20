@@ -1,4 +1,4 @@
-use samp_mirror::db::{Db, InsertRemark};
+use samp_mirror::db::{Db, IndexedRemark};
 
 #[test]
 fn test_snapshot_roundtrip() {
@@ -6,23 +6,24 @@ fn test_snapshot_roundtrip() {
     let db_path = dir.path().join("source.db");
     let output_path = dir.path().join("snapshot.tar.gz");
 
-    let db = Db::open(db_path.to_str().unwrap());
-    db.insert_remark(&InsertRemark {
-        block_number: 100,
-        ext_index: 1,
-        sender: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
-        content_type: 0x10,
-        channel_block: None,
-        channel_index: None,
-    });
-    db.insert_channel(200, 3);
-    drop(db);
-
-    let size = samp_mirror::db::snapshot(
-        db_path.to_str().unwrap(),
-        output_path.to_str().unwrap(),
+    let mut db = Db::open(db_path.to_str().unwrap());
+    db.insert_indexed_block(
+        100,
+        &[IndexedRemark {
+            block_number: 100,
+            ext_index: 1,
+            sender: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY".to_string(),
+            content_type: 0x10,
+            channel_block: None,
+            channel_index: None,
+        }],
+        &[(200, 3)],
     )
     .unwrap();
+    drop(db);
+
+    let size = samp_mirror::db::snapshot(db_path.to_str().unwrap(), output_path.to_str().unwrap())
+        .unwrap();
     assert!(size > 0);
 
     let extract_dir = dir.path().join("extracted");
@@ -32,7 +33,7 @@ fn test_snapshot_roundtrip() {
     archive.unpack(&extract_dir).unwrap();
 
     let extracted_db = Db::open(extract_dir.join("mirror.db").to_str().unwrap());
-    assert_eq!(extracted_db.last_block(), 100);
+    assert_eq!(extracted_db.last_block().unwrap(), 100);
     let channels = extracted_db.channels();
     assert_eq!(channels.len(), 1);
     assert_eq!(channels[0].block, 200);

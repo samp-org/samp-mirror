@@ -16,15 +16,15 @@ pub async fn serve(
 
     let db = Arc::new(Mutex::new(db::Db::open(db_path)));
 
-    let last_indexed = db.lock().await.last_block();
+    let last_indexed = db
+        .lock()
+        .await
+        .last_block()
+        .map_err(|e| format!("db last_block: {e}"))?;
     if last_indexed == 0 && start_block > 0 {
-        tracing::info!(
-            "Database: {db_path} (empty; first-run start_block = {start_block})"
-        );
+        tracing::info!("Database: {db_path} (empty; first-run start_block = {start_block})");
     } else {
-        tracing::info!(
-            "Database: {db_path} (last indexed block = {last_indexed})"
-        );
+        tracing::info!("Database: {db_path} (last indexed block = {last_indexed})");
     }
 
     let state = api::AppState {
