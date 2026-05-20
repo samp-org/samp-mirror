@@ -1,9 +1,10 @@
 use futures_util::{SinkExt, StreamExt};
 use samp_mirror::db::{Db, InsertRemark};
-use serde_json::{json, Value};
+use samp_mirror::indexer::RemarkCallIds;
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -48,6 +49,72 @@ fn build_samp_extrinsic(pubkey: &samp::Pubkey, remark_payload: &[u8]) -> String 
     format!("0x{}", hex::encode(ext.as_bytes()))
 }
 
+fn test_remark_calls() -> RemarkCallIds {
+    RemarkCallIds {
+        remark: Some((0, 9)),
+        remark_with_event: (0, 7),
+    }
+}
+
+fn push_compact(out: &mut Vec<u8>, value: u32) {
+    samp::encode_compact(u64::from(value), out);
+}
+
+fn push_string(out: &mut Vec<u8>, value: &str) {
+    push_compact(out, value.len() as u32);
+    out.extend_from_slice(value.as_bytes());
+}
+
+fn push_strings(out: &mut Vec<u8>, values: &[&str]) {
+    push_compact(out, values.len() as u32);
+    for value in values {
+        push_string(out, value);
+    }
+}
+
+fn minimal_metadata_hex(
+    pallet_idx: u8,
+    remark: Option<u8>,
+    remark_with_event: Option<u8>,
+) -> String {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"meta");
+    bytes.push(14);
+
+    push_compact(&mut bytes, 1);
+    push_compact(&mut bytes, 0);
+    push_strings(&mut bytes, &[]);
+    push_compact(&mut bytes, 0);
+    bytes.push(1);
+    let mut variants = Vec::new();
+    if let Some(idx) = remark {
+        variants.push(("remark", idx));
+    }
+    if let Some(idx) = remark_with_event {
+        variants.push(("remark_with_event", idx));
+    }
+    push_compact(&mut bytes, variants.len() as u32);
+    for (name, idx) in variants {
+        push_string(&mut bytes, name);
+        push_compact(&mut bytes, 0);
+        bytes.push(idx);
+        push_strings(&mut bytes, &[]);
+    }
+    push_strings(&mut bytes, &[]);
+
+    push_compact(&mut bytes, 1);
+    push_string(&mut bytes, "System");
+    bytes.push(0);
+    bytes.push(1);
+    push_compact(&mut bytes, 0);
+    bytes.push(0);
+    push_compact(&mut bytes, 0);
+    bytes.push(0);
+    bytes.push(pallet_idx);
+
+    format!("0x{}", hex::encode(bytes))
+}
+
 fn samp_remark(body: &[u8]) -> Vec<u8> {
     let mut remark = vec![0x10];
     remark.extend_from_slice(&[0u8; 32]);
@@ -71,7 +138,8 @@ impl Drop for MockNode {
 #[derive(Clone)]
 struct MockNodeConfig {
     chain_name: String,
-    ss58_prefix: u16,
+    ss58_prefix: Option<u16>,
+    metadata_hex: String,
     head: u64,
     blocks: BTreeMap<u64, Vec<String>>,
     subscription_blocks: Vec<u64>,
@@ -83,7 +151,8 @@ impl Default for MockNodeConfig {
     fn default() -> Self {
         Self {
             chain_name: "TestChain".into(),
-            ss58_prefix: 42,
+            ss58_prefix: Some(42),
+            metadata_hex: minimal_metadata_hex(0, Some(9), Some(7)),
             head: 0,
             blocks: BTreeMap::new(),
             subscription_blocks: Vec::new(),
@@ -107,8 +176,7 @@ async fn start_mock_node(config: MockNodeConfig) -> MockNode {
                     return;
                 };
                 let (mut write, mut read) = ws.split();
-                let errored: std::sync::Mutex<HashSet<u64>> =
-                    std::sync::Mutex::new(HashSet::new());
+                let errored: std::sync::Mutex<HashSet<u64>> = std::sync::Mutex::new(HashSet::new());
                 let ping_sent = AtomicBool::new(false);
 
                 while let Some(Ok(msg)) = read.next().await {
@@ -130,27 +198,29 @@ async fn start_mock_node(config: MockNodeConfig) -> MockNode {
                     match method {
                         "system_chain" => {
                             let resp = json!({"jsonrpc":"2.0","id":id,"result":config.chain_name});
-                            let _ =
-                                write.send(WsMessage::Text(resp.to_string().into())).await;
+                            let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
                         }
                         "system_properties" => {
-                            let resp = json!({"jsonrpc":"2.0","id":id,"result":{"ss58Format":config.ss58_prefix}});
-                            let _ =
-                                write.send(WsMessage::Text(resp.to_string().into())).await;
+                            let result = match config.ss58_prefix {
+                                Some(prefix) => json!({"ss58Format": prefix}),
+                                None => json!({}),
+                            };
+                            let resp = json!({"jsonrpc":"2.0","id":id,"result":result});
+                            let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
+                        }
+                        "state_getMetadata" => {
+                            let resp =
+                                json!({"jsonrpc":"2.0","id":id,"result":config.metadata_hex});
+                            let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
                         }
                         "chain_getHeader" => {
                             let hex = format!("0x{:x}", config.head);
-                            let resp =
-                                json!({"jsonrpc":"2.0","id":id,"result":{"number":hex}});
-                            let _ =
-                                write.send(WsMessage::Text(resp.to_string().into())).await;
+                            let resp = json!({"jsonrpc":"2.0","id":id,"result":{"number":hex}});
+                            let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
                         }
                         "chain_getBlockHash" => {
                             let block_num = req["params"][0].as_u64().unwrap_or(0);
-                            let should_error = if config
-                                .error_on_first_hash
-                                .contains(&block_num)
-                            {
+                            let should_error = if config.error_on_first_hash.contains(&block_num) {
                                 let mut guard = errored.lock().unwrap();
                                 if guard.contains(&block_num) {
                                     false
@@ -163,47 +233,34 @@ async fn start_mock_node(config: MockNodeConfig) -> MockNode {
                             };
                             if should_error {
                                 let resp = json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":"rate limited"}});
-                                let _ = write
-                                    .send(WsMessage::Text(resp.to_string().into()))
-                                    .await;
+                                let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
                                 continue;
                             }
                             let hash = format!("0x{:064x}", block_num);
                             let resp = json!({"jsonrpc":"2.0","id":id,"result":hash});
-                            let _ =
-                                write.send(WsMessage::Text(resp.to_string().into())).await;
+                            let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
                         }
                         "chain_getBlock" => {
                             let hash_str = req["params"][0].as_str().unwrap_or("");
-                            match u64::from_str_radix(
-                                hash_str.trim_start_matches("0x"),
-                                16,
-                            ) {
+                            match u64::from_str_radix(hash_str.trim_start_matches("0x"), 16) {
                                 Ok(block_num) => {
-                                    let exts = config
-                                        .blocks
-                                        .get(&block_num)
-                                        .cloned()
-                                        .unwrap_or_default();
+                                    let exts =
+                                        config.blocks.get(&block_num).cloned().unwrap_or_default();
                                     let hex = format!("0x{:x}", block_num);
                                     let resp = json!({"jsonrpc":"2.0","id":id,"result":{"block":{"header":{"number":hex},"extrinsics":exts}}});
-                                    let _ = write
-                                        .send(WsMessage::Text(resp.to_string().into()))
-                                        .await;
+                                    let _ =
+                                        write.send(WsMessage::Text(resp.to_string().into())).await;
                                 }
                                 Err(_) => {
-                                    let resp =
-                                        json!({"jsonrpc":"2.0","id":id,"result":null});
-                                    let _ = write
-                                        .send(WsMessage::Text(resp.to_string().into()))
-                                        .await;
+                                    let resp = json!({"jsonrpc":"2.0","id":id,"result":null});
+                                    let _ =
+                                        write.send(WsMessage::Text(resp.to_string().into())).await;
                                 }
                             }
                         }
                         "chain_subscribeNewHeads" => {
                             let resp = json!({"jsonrpc":"2.0","id":id,"result":"sub_1"});
-                            let _ =
-                                write.send(WsMessage::Text(resp.to_string().into())).await;
+                            let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
                             for &block_num in &config.subscription_blocks {
                                 let hex = format!("0x{:x}", block_num);
                                 let notif = json!({
@@ -211,9 +268,7 @@ async fn start_mock_node(config: MockNodeConfig) -> MockNode {
                                     "method":"chain_subscribeNewHeads",
                                     "params":{"subscription":"sub_1","result":{"number":hex}}
                                 });
-                                let _ = write
-                                    .send(WsMessage::Text(notif.to_string().into()))
-                                    .await;
+                                let _ = write.send(WsMessage::Text(notif.to_string().into())).await;
                             }
                         }
                         _ => {}
@@ -249,34 +304,35 @@ async fn wait_for_block(db: &Arc<Mutex<Db>>, target: u64, timeout_secs: u64) {
 async fn test_fetch_chain_info() {
     let mock = start_mock_node(MockNodeConfig {
         chain_name: "Polkadot".into(),
-        ss58_prefix: 0,
+        ss58_prefix: Some(0),
         head: 100,
         ..Default::default()
     })
     .await;
 
-    let (chain, prefix) = samp_mirror::indexer::fetch_chain_info(&mock.url)
+    let info = samp_mirror::indexer::fetch_chain_info(&mock.url)
         .await
         .unwrap();
-    assert_eq!(chain, "Polkadot");
-    assert_eq!(prefix, 0);
+    assert_eq!(info.chain, "Polkadot");
+    assert_eq!(info.ss58_prefix, 0);
+    assert_eq!(info.remark_calls, test_remark_calls());
 }
 
 #[tokio::test]
 async fn test_fetch_chain_info_custom_prefix() {
     let mock = start_mock_node(MockNodeConfig {
         chain_name: "Kusama".into(),
-        ss58_prefix: 2,
+        ss58_prefix: Some(2),
         head: 50,
         ..Default::default()
     })
     .await;
 
-    let (chain, prefix) = samp_mirror::indexer::fetch_chain_info(&mock.url)
+    let info = samp_mirror::indexer::fetch_chain_info(&mock.url)
         .await
         .unwrap();
-    assert_eq!(chain, "Kusama");
-    assert_eq!(prefix, 2);
+    assert_eq!(info.chain, "Kusama");
+    assert_eq!(info.ss58_prefix, 2);
 }
 
 #[tokio::test]
@@ -285,8 +341,7 @@ async fn test_fetch_chain_info_connection_refused() {
     let port = listener.local_addr().unwrap().port();
     drop(listener);
 
-    let result =
-        samp_mirror::indexer::fetch_chain_info(&format!("ws://127.0.0.1:{port}")).await;
+    let result = samp_mirror::indexer::fetch_chain_info(&format!("ws://127.0.0.1:{port}")).await;
     assert!(result.is_err());
 }
 
@@ -294,18 +349,46 @@ async fn test_fetch_chain_info_connection_refused() {
 async fn test_fetch_chain_info_with_ping() {
     let mock = start_mock_node(MockNodeConfig {
         chain_name: "PingChain".into(),
-        ss58_prefix: 42,
+        ss58_prefix: Some(42),
         head: 10,
         send_ping: true,
         ..Default::default()
     })
     .await;
 
-    let (chain, prefix) = samp_mirror::indexer::fetch_chain_info(&mock.url)
+    let info = samp_mirror::indexer::fetch_chain_info(&mock.url)
         .await
         .unwrap();
-    assert_eq!(chain, "PingChain");
-    assert_eq!(prefix, 42);
+    assert_eq!(info.chain, "PingChain");
+    assert_eq!(info.ss58_prefix, 42);
+}
+
+#[tokio::test]
+async fn test_fetch_chain_info_requires_ss58_prefix() {
+    let mock = start_mock_node(MockNodeConfig {
+        ss58_prefix: None,
+        ..Default::default()
+    })
+    .await;
+
+    let err = samp_mirror::indexer::fetch_chain_info(&mock.url)
+        .await
+        .unwrap_err();
+    assert!(err.contains("ss58Format"));
+}
+
+#[tokio::test]
+async fn test_fetch_chain_info_requires_remark_with_event() {
+    let mock = start_mock_node(MockNodeConfig {
+        metadata_hex: minimal_metadata_hex(0, Some(9), None),
+        ..Default::default()
+    })
+    .await;
+
+    let err = samp_mirror::indexer::fetch_chain_info(&mock.url)
+        .await
+        .unwrap_err();
+    assert!(err.contains("System.remark_with_event"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -334,7 +417,7 @@ async fn test_run_inner_catch_up_and_subscribe() {
     let db2 = db.clone();
     let url = mock.url.clone();
     let handle = tokio::spawn(async move {
-        samp_mirror::indexer::run_inner(&url, &db2, 42, 1).await
+        samp_mirror::indexer::run_inner(&url, &db2, 42, test_remark_calls(), 1).await
     });
 
     wait_for_block(&db, 6, 10).await;
@@ -376,7 +459,7 @@ async fn test_run_inner_subscription_only() {
     let db2 = db.clone();
     let url = mock.url.clone();
     let handle = tokio::spawn(async move {
-        samp_mirror::indexer::run_inner(&url, &db2, 42, 1).await
+        samp_mirror::indexer::run_inner(&url, &db2, 42, test_remark_calls(), 1).await
     });
 
     wait_for_block(&db, 101, 10).await;
@@ -419,7 +502,7 @@ async fn test_run_inner_resume_from_existing() {
     let db2 = db.clone();
     let url = mock.url.clone();
     let handle = tokio::spawn(async move {
-        samp_mirror::indexer::run_inner(&url, &db2, 42, 1).await
+        samp_mirror::indexer::run_inner(&url, &db2, 42, test_remark_calls(), 1).await
     });
 
     wait_for_block(&db, 53, 10).await;
@@ -454,7 +537,7 @@ async fn test_run_inner_rpc_error_recovery() {
     let db2 = db.clone();
     let url = mock.url.clone();
     let handle = tokio::spawn(async move {
-        samp_mirror::indexer::run_inner(&url, &db2, 42, 1).await
+        samp_mirror::indexer::run_inner(&url, &db2, 42, test_remark_calls(), 1).await
     });
 
     wait_for_block(&db, 3, 10).await;
@@ -488,7 +571,7 @@ async fn test_run_inner_many_blocks_pipeline_increase() {
     let db2 = db.clone();
     let url = mock.url.clone();
     let handle = tokio::spawn(async move {
-        samp_mirror::indexer::run_inner(&url, &db2, 42, 1).await
+        samp_mirror::indexer::run_inner(&url, &db2, 42, test_remark_calls(), 1).await
     });
 
     wait_for_block(&db, 110, 30).await;
@@ -520,7 +603,7 @@ async fn test_run_inner_log_at_block_1000() {
     let db2 = db.clone();
     let url = mock.url.clone();
     let handle = tokio::spawn(async move {
-        samp_mirror::indexer::run_inner(&url, &db2, 42, 999).await
+        samp_mirror::indexer::run_inner(&url, &db2, 42, test_remark_calls(), 999).await
     });
 
     wait_for_block(&db, 1001, 10).await;
@@ -549,7 +632,7 @@ async fn test_run_reconnect_loop() {
     let db2 = db.clone();
     let url = mock.url.clone();
     let handle = tokio::spawn(async move {
-        samp_mirror::indexer::run(url, db2, 42, 1).await
+        samp_mirror::indexer::run(url, db2, 42, test_remark_calls(), 1).await
     });
 
     wait_for_block(&db, 1, 10).await;
@@ -650,18 +733,15 @@ async fn test_run_inner_websocket_close_with_ping() {
             match method {
                 "chain_getHeader" => {
                     let resp = json!({"jsonrpc":"2.0","id":id,"result":{"number":"0x0"}});
-                    let _ =
-                        write.send(WsMessage::Text(resp.to_string().into())).await;
+                    let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
                 }
                 "chain_subscribeNewHeads" => {
                     let resp = json!({"jsonrpc":"2.0","id":id,"result":"sub_1"});
-                    let _ =
-                        write.send(WsMessage::Text(resp.to_string().into())).await;
+                    let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
                 }
                 "chain_getBlock" => {
                     let resp = json!({"jsonrpc":"2.0","id":id,"result":null});
-                    let _ =
-                        write.send(WsMessage::Text(resp.to_string().into())).await;
+                    let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
                     let _ = write.send(WsMessage::Ping(vec![].into())).await;
                     break;
                 }
@@ -671,7 +751,6 @@ async fn test_run_inner_websocket_close_with_ping() {
     });
 
     let (db, _dir) = temp_db();
-    let result = samp_mirror::indexer::run_inner(&url, &db, 42, 1).await;
+    let result = samp_mirror::indexer::run_inner(&url, &db, 42, test_remark_calls(), 1).await;
     assert!(result.is_err());
 }
-
