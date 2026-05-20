@@ -1,10 +1,10 @@
 use futures_util::{SinkExt, StreamExt};
 use samp_mirror::db::{Db, InsertRemark};
 use samp_mirror::indexer::RemarkCallIds;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -140,6 +140,7 @@ struct MockNodeConfig {
     chain_name: String,
     ss58_prefix: Option<u16>,
     metadata_hex: String,
+    metadata_error: Option<Value>,
     head: u64,
     blocks: BTreeMap<u64, Vec<String>>,
     subscription_blocks: Vec<u64>,
@@ -153,6 +154,7 @@ impl Default for MockNodeConfig {
             chain_name: "TestChain".into(),
             ss58_prefix: Some(42),
             metadata_hex: minimal_metadata_hex(0, Some(9), Some(7)),
+            metadata_error: None,
             head: 0,
             blocks: BTreeMap::new(),
             subscription_blocks: Vec::new(),
@@ -209,8 +211,12 @@ async fn start_mock_node(config: MockNodeConfig) -> MockNode {
                             let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
                         }
                         "state_getMetadata" => {
-                            let resp =
-                                json!({"jsonrpc":"2.0","id":id,"result":config.metadata_hex});
+                            let resp = match &config.metadata_error {
+                                Some(error) => json!({"jsonrpc":"2.0","id":id,"error":error}),
+                                None => {
+                                    json!({"jsonrpc":"2.0","id":id,"result":config.metadata_hex})
+                                }
+                            };
                             let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
                         }
                         "chain_getHeader" => {
@@ -389,6 +395,21 @@ async fn test_fetch_chain_info_requires_remark_with_event() {
         .await
         .unwrap_err();
     assert!(err.contains("System.remark_with_event"));
+}
+
+#[tokio::test]
+async fn test_fetch_chain_info_reports_metadata_rpc_error() {
+    let mock = start_mock_node(MockNodeConfig {
+        metadata_error: Some(json!({"code": -32000, "message": "metadata unavailable"})),
+        ..Default::default()
+    })
+    .await;
+
+    let err = samp_mirror::indexer::fetch_chain_info(&mock.url)
+        .await
+        .unwrap_err();
+    assert!(err.contains("metadata RPC error"));
+    assert!(err.contains("metadata unavailable"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

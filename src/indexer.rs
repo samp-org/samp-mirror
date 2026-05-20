@@ -1,5 +1,5 @@
 use futures_util::{SinkExt, StreamExt};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
