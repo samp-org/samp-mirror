@@ -7,11 +7,38 @@ use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
 use crate::db::Db;
 
-const SYSTEM_PALLET_IDX: u8 = 0;
-const SYSTEM_REMARK_CALL_INDICES: &[u8] = &[7, 9];
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RemarkCallIds {
+    pub remark: Option<(u8, u8)>,
+    pub remark_with_event: (u8, u8),
+}
 
-/// Fetch chain name and SS58 prefix from the node via RPC.
-pub async fn fetch_chain_info(node_url: &str) -> Result<(String, u16), String> {
+impl RemarkCallIds {
+    pub fn from_metadata(metadata: &samp::metadata::Metadata) -> Result<Self, String> {
+        let remark = metadata.find_call_index("System", "remark");
+        let remark_with_event = metadata
+            .find_call_index("System", "remark_with_event")
+            .ok_or("runtime does not expose System.remark_with_event")?;
+        Ok(Self {
+            remark,
+            remark_with_event,
+        })
+    }
+
+    pub fn accepts(self, pair: (u8, u8)) -> bool {
+        self.remark == Some(pair) || self.remark_with_event == pair
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChainInfo {
+    pub chain: String,
+    pub ss58_prefix: u16,
+    pub remark_calls: RemarkCallIds,
+}
+
+/// Fetch chain name, SS58 prefix, and remark call IDs from the node via RPC.
+pub async fn fetch_chain_info(node_url: &str) -> Result<ChainInfo, String> {
     let (ws, _) = connect_async(node_url)
         .await
         .map_err(|e| format!("connect: {e}"))?;
@@ -24,7 +51,10 @@ pub async fn fetch_chain_info(node_url: &str) -> Result<(String, u16), String> {
         .map_err(|e| format!("send: {e}"))?;
     let resp = next_text(&mut read).await?;
     let v: Value = serde_json::from_str(&resp).map_err(|e| format!("parse: {e}"))?;
-    let chain = v["result"].as_str().unwrap_or("Unknown").to_string();
+    let chain = v["result"]
+        .as_str()
+        .ok_or("missing system_chain result")?
+        .to_string();
 
     let req = json!({ "jsonrpc": "2.0", "id": 2, "method": "system_properties", "params": [] });
     write
@@ -33,14 +63,48 @@ pub async fn fetch_chain_info(node_url: &str) -> Result<(String, u16), String> {
         .map_err(|e| format!("send: {e}"))?;
     let resp = next_text(&mut read).await?;
     let v: Value = serde_json::from_str(&resp).map_err(|e| format!("parse: {e}"))?;
-    let ss58_prefix = v["result"]["ss58Format"].as_u64().unwrap_or(42) as u16;
+    let ss58_raw = v["result"]["ss58Format"]
+        .as_u64()
+        .ok_or("missing ss58Format")?;
+    let ss58_prefix =
+        u16::try_from(ss58_raw).map_err(|_| format!("ss58Format out of range: {ss58_raw}"))?;
+    samp::Ss58Prefix::new(ss58_prefix).map_err(|e| format!("ss58Format unsupported: {e}"))?;
 
-    Ok((chain, ss58_prefix))
+    let req = json!({ "jsonrpc": "2.0", "id": 3, "method": "state_getMetadata", "params": [] });
+    write
+        .send(WsMessage::Text(req.to_string().into()))
+        .await
+        .map_err(|e| format!("send: {e}"))?;
+    let resp = next_text(&mut read).await?;
+    let v: Value = serde_json::from_str(&resp).map_err(|e| format!("parse: {e}"))?;
+    if let Some(err) = v.get("error") {
+        return Err(format!("metadata RPC error: {err}"));
+    }
+    let metadata_hex = v["result"]
+        .as_str()
+        .ok_or("missing state_getMetadata result")?;
+    let metadata_bytes =
+        hex::decode(metadata_hex.trim_start_matches("0x")).map_err(|e| format!("hex: {e}"))?;
+    let metadata = samp::metadata::Metadata::from_runtime_metadata(&metadata_bytes)
+        .map_err(|e| format!("metadata: {e}"))?;
+    let remark_calls = RemarkCallIds::from_metadata(&metadata)?;
+
+    Ok(ChainInfo {
+        chain,
+        ss58_prefix,
+        remark_calls,
+    })
 }
 
-pub async fn run(node_url: String, db: Arc<Mutex<Db>>, ss58_prefix: u16, start_block: u64) {
+pub async fn run(
+    node_url: String,
+    db: Arc<Mutex<Db>>,
+    ss58_prefix: u16,
+    remark_calls: RemarkCallIds,
+    start_block: u64,
+) {
     loop {
-        if let Err(e) = run_inner(&node_url, &db, ss58_prefix, start_block).await {
+        if let Err(e) = run_inner(&node_url, &db, ss58_prefix, remark_calls, start_block).await {
             tracing::error!("Indexer error: {e}. Reconnecting in 5s...");
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
@@ -56,6 +120,7 @@ pub async fn run_inner(
     node_url: &str,
     db: &Arc<Mutex<Db>>,
     ss58_prefix: u16,
+    remark_calls: RemarkCallIds,
     start_block: u64,
 ) -> Result<(), String> {
     let (ws, _) = connect_async(node_url)
@@ -92,7 +157,16 @@ pub async fn run_inner(
             "Catching up: {resume_from} -> {head} ({} blocks)",
             head - resume_from + 1
         );
-        catch_up(&mut write, &mut read, db, resume_from, head, ss58_prefix).await?;
+        catch_up(
+            &mut write,
+            &mut read,
+            db,
+            resume_from,
+            head,
+            ss58_prefix,
+            remark_calls,
+        )
+        .await?;
         tracing::info!("Catch-up complete at block {head}");
     }
 
@@ -143,7 +217,7 @@ pub async fn run_inner(
                     .as_str()
                     .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
                     .unwrap_or(0);
-                process_block(block, block_num, db, ss58_prefix).await;
+                process_block(block, block_num, db, ss58_prefix, remark_calls).await;
             }
         }
     }
@@ -168,6 +242,7 @@ async fn catch_up(
     start: u64,
     end: u64,
     ss58_prefix: u16,
+    remark_calls: RemarkCallIds,
 ) -> Result<(), String> {
     let max_depth: usize = 20;
     let mut pipeline_depth: usize = 10;
@@ -248,7 +323,7 @@ async fn catch_up(
         }
 
         while let Some(block_data) = ready_blocks.remove(&next_to_process) {
-            process_block(&block_data, next_to_process, db, ss58_prefix).await;
+            process_block(&block_data, next_to_process, db, ss58_prefix, remark_calls).await;
             if next_to_process.is_multiple_of(1000) {
                 tracing::info!("Synced to block {next_to_process} (pipeline: {pipeline_depth})");
             }
@@ -263,7 +338,13 @@ async fn catch_up(
     Ok(())
 }
 
-pub async fn process_block(block: &Value, block_num: u64, db: &Arc<Mutex<Db>>, ss58_prefix: u16) {
+pub async fn process_block(
+    block: &Value,
+    block_num: u64,
+    db: &Arc<Mutex<Db>>,
+    ss58_prefix: u16,
+    remark_calls: RemarkCallIds,
+) {
     let extrinsics = match block["extrinsics"].as_array() {
         Some(exts) => exts,
         None => return,
@@ -304,9 +385,8 @@ pub async fn process_block(block: &Value, block_num: u64, db: &Arc<Mutex<Db>>, s
             Some(c) => c,
             None => continue,
         };
-        if call.pallet().get() != SYSTEM_PALLET_IDX
-            || !SYSTEM_REMARK_CALL_INDICES.contains(&call.call().get())
-        {
+        let call_id = (call.pallet().get(), call.call().get());
+        if !remark_calls.accepts(call_id) {
             continue;
         }
         let remark = match samp::scale::decode_bytes(call.args().as_bytes()) {
