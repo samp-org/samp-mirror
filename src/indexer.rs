@@ -1,11 +1,11 @@
 use futures_util::{SinkExt, StreamExt};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 
-use crate::db::Db;
+use crate::db::{Db, IndexedRemark};
 
 const SYSTEM_PALLET_IDX: u8 = 0;
 const SYSTEM_REMARK_CALL_INDICES: &[u8] = &[7, 9];
@@ -80,7 +80,11 @@ pub async fn run_inner(
     )
     .map_err(|e| format!("parse: {e}"))?;
 
-    let last_block = db.lock().await.last_block();
+    let last_block = db
+        .lock()
+        .await
+        .last_block()
+        .map_err(|e| format!("db last_block: {e}"))?;
     let resume_from = if last_block > 0 {
         last_block + 1
     } else {
@@ -143,7 +147,7 @@ pub async fn run_inner(
                     .as_str()
                     .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
                     .unwrap_or(0);
-                process_block(block, block_num, db, ss58_prefix).await;
+                process_block(block, block_num, db, ss58_prefix).await?;
             }
         }
     }
@@ -248,7 +252,7 @@ async fn catch_up(
         }
 
         while let Some(block_data) = ready_blocks.remove(&next_to_process) {
-            process_block(&block_data, next_to_process, db, ss58_prefix).await;
+            process_block(&block_data, next_to_process, db, ss58_prefix).await?;
             if next_to_process.is_multiple_of(1000) {
                 tracing::info!("Synced to block {next_to_process} (pipeline: {pipeline_depth})");
             }
@@ -263,37 +267,34 @@ async fn catch_up(
     Ok(())
 }
 
-pub async fn process_block(block: &Value, block_num: u64, db: &Arc<Mutex<Db>>, ss58_prefix: u16) {
-    let extrinsics = match block["extrinsics"].as_array() {
-        Some(exts) => exts,
-        None => return,
-    };
+pub async fn process_block(
+    block: &Value,
+    block_num: u64,
+    db: &Arc<Mutex<Db>>,
+    ss58_prefix: u16,
+) -> Result<(), String> {
+    let extrinsics = block["extrinsics"]
+        .as_array()
+        .ok_or("block missing extrinsics")?;
 
-    let block_number_typed = match samp::BlockNumber::try_from_u64(block_num) {
-        Ok(n) => n,
-        Err(_) => {
-            tracing::error!("Block {block_num} exceeds u32::MAX, skipping");
-            return;
-        }
-    };
+    let block_number_typed = samp::BlockNumber::try_from_u64(block_num)
+        .map_err(|e| format!("invalid block number: {e}"))?;
     let block_number_u32 = block_number_typed.get();
 
     let mut count = 0u32;
 
-    let prefix_typed = match samp::Ss58Prefix::new(ss58_prefix) {
-        Ok(p) => p,
-        Err(_) => return,
-    };
+    let prefix_typed =
+        samp::Ss58Prefix::new(ss58_prefix).map_err(|e| format!("invalid ss58 prefix: {e}"))?;
+
+    let mut remarks = Vec::new();
+    let mut channels = Vec::new();
 
     for (ext_index, ext) in extrinsics.iter().enumerate() {
-        let ext_hex = match ext.as_str() {
-            Some(s) => s,
-            None => continue,
-        };
-        let raw = match hex::decode(ext_hex.trim_start_matches("0x")) {
-            Ok(b) => b,
-            Err(_) => continue,
-        };
+        let ext_hex = ext
+            .as_str()
+            .ok_or_else(|| format!("extrinsic {ext_index} is not a hex string"))?;
+        let raw = hex::decode(ext_hex.trim_start_matches("0x"))
+            .map_err(|e| format!("extrinsic {ext_index} hex: {e}"))?;
         let ext_bytes = samp::ExtrinsicBytes::from_bytes(raw);
 
         let sender = match samp::extract_signer(&ext_bytes) {
@@ -328,28 +329,32 @@ pub async fn process_block(block: &Value, block_num: u64, db: &Arc<Mutex<Db>>, s
             channel_index = Some(u16::from_le_bytes(remark[5..7].try_into().unwrap()));
         }
 
-        let ext_index_u16 = match samp::ExtIndex::try_from_usize(ext_index) {
-            Ok(i) => i.get(),
-            Err(_) => continue,
-        };
-        let db = db.lock().await;
-        db.insert_remark(&crate::db::InsertRemark {
+        let ext_index_u16 = samp::ExtIndex::try_from_usize(ext_index)
+            .map_err(|e| format!("invalid extrinsic index: {e}"))?
+            .get();
+        remarks.push(IndexedRemark {
             block_number: block_number_u32,
             ext_index: ext_index_u16,
-            sender: &sender_ss58,
+            sender: sender_ss58,
             content_type,
             channel_block,
             channel_index,
         });
         if content_type & 0x0F == 0x03 {
-            db.insert_channel(block_number_u32, ext_index_u16);
+            channels.push((block_number_u32, ext_index_u16));
         }
         count += 1;
     }
 
+    db.lock()
+        .await
+        .insert_indexed_block(block_number_u32, &remarks, &channels)
+        .map_err(|e| format!("db: {e}"))?;
+
     if count > 0 {
         tracing::info!("Block {block_num}: indexed {count} SAMP remark(s)");
     }
+    Ok(())
 }
 
 async fn next_text(

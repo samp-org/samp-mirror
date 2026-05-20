@@ -1,9 +1,9 @@
 use futures_util::{SinkExt, StreamExt};
 use samp_mirror::db::{Db, InsertRemark};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -107,8 +107,7 @@ async fn start_mock_node(config: MockNodeConfig) -> MockNode {
                     return;
                 };
                 let (mut write, mut read) = ws.split();
-                let errored: std::sync::Mutex<HashSet<u64>> =
-                    std::sync::Mutex::new(HashSet::new());
+                let errored: std::sync::Mutex<HashSet<u64>> = std::sync::Mutex::new(HashSet::new());
                 let ping_sent = AtomicBool::new(false);
 
                 while let Some(Ok(msg)) = read.next().await {
@@ -130,27 +129,20 @@ async fn start_mock_node(config: MockNodeConfig) -> MockNode {
                     match method {
                         "system_chain" => {
                             let resp = json!({"jsonrpc":"2.0","id":id,"result":config.chain_name});
-                            let _ =
-                                write.send(WsMessage::Text(resp.to_string().into())).await;
+                            let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
                         }
                         "system_properties" => {
                             let resp = json!({"jsonrpc":"2.0","id":id,"result":{"ss58Format":config.ss58_prefix}});
-                            let _ =
-                                write.send(WsMessage::Text(resp.to_string().into())).await;
+                            let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
                         }
                         "chain_getHeader" => {
                             let hex = format!("0x{:x}", config.head);
-                            let resp =
-                                json!({"jsonrpc":"2.0","id":id,"result":{"number":hex}});
-                            let _ =
-                                write.send(WsMessage::Text(resp.to_string().into())).await;
+                            let resp = json!({"jsonrpc":"2.0","id":id,"result":{"number":hex}});
+                            let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
                         }
                         "chain_getBlockHash" => {
                             let block_num = req["params"][0].as_u64().unwrap_or(0);
-                            let should_error = if config
-                                .error_on_first_hash
-                                .contains(&block_num)
-                            {
+                            let should_error = if config.error_on_first_hash.contains(&block_num) {
                                 let mut guard = errored.lock().unwrap();
                                 if guard.contains(&block_num) {
                                     false
@@ -163,47 +155,34 @@ async fn start_mock_node(config: MockNodeConfig) -> MockNode {
                             };
                             if should_error {
                                 let resp = json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":"rate limited"}});
-                                let _ = write
-                                    .send(WsMessage::Text(resp.to_string().into()))
-                                    .await;
+                                let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
                                 continue;
                             }
                             let hash = format!("0x{:064x}", block_num);
                             let resp = json!({"jsonrpc":"2.0","id":id,"result":hash});
-                            let _ =
-                                write.send(WsMessage::Text(resp.to_string().into())).await;
+                            let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
                         }
                         "chain_getBlock" => {
                             let hash_str = req["params"][0].as_str().unwrap_or("");
-                            match u64::from_str_radix(
-                                hash_str.trim_start_matches("0x"),
-                                16,
-                            ) {
+                            match u64::from_str_radix(hash_str.trim_start_matches("0x"), 16) {
                                 Ok(block_num) => {
-                                    let exts = config
-                                        .blocks
-                                        .get(&block_num)
-                                        .cloned()
-                                        .unwrap_or_default();
+                                    let exts =
+                                        config.blocks.get(&block_num).cloned().unwrap_or_default();
                                     let hex = format!("0x{:x}", block_num);
                                     let resp = json!({"jsonrpc":"2.0","id":id,"result":{"block":{"header":{"number":hex},"extrinsics":exts}}});
-                                    let _ = write
-                                        .send(WsMessage::Text(resp.to_string().into()))
-                                        .await;
+                                    let _ =
+                                        write.send(WsMessage::Text(resp.to_string().into())).await;
                                 }
                                 Err(_) => {
-                                    let resp =
-                                        json!({"jsonrpc":"2.0","id":id,"result":null});
-                                    let _ = write
-                                        .send(WsMessage::Text(resp.to_string().into()))
-                                        .await;
+                                    let resp = json!({"jsonrpc":"2.0","id":id,"result":null});
+                                    let _ =
+                                        write.send(WsMessage::Text(resp.to_string().into())).await;
                                 }
                             }
                         }
                         "chain_subscribeNewHeads" => {
                             let resp = json!({"jsonrpc":"2.0","id":id,"result":"sub_1"});
-                            let _ =
-                                write.send(WsMessage::Text(resp.to_string().into())).await;
+                            let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
                             for &block_num in &config.subscription_blocks {
                                 let hex = format!("0x{:x}", block_num);
                                 let notif = json!({
@@ -211,9 +190,7 @@ async fn start_mock_node(config: MockNodeConfig) -> MockNode {
                                     "method":"chain_subscribeNewHeads",
                                     "params":{"subscription":"sub_1","result":{"number":hex}}
                                 });
-                                let _ = write
-                                    .send(WsMessage::Text(notif.to_string().into()))
-                                    .await;
+                                let _ = write.send(WsMessage::Text(notif.to_string().into())).await;
                             }
                         }
                         _ => {}
@@ -232,7 +209,7 @@ async fn start_mock_node(config: MockNodeConfig) -> MockNode {
 async fn wait_for_block(db: &Arc<Mutex<Db>>, target: u64, timeout_secs: u64) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
     loop {
-        if db.lock().await.last_block() >= target {
+        if db.lock().await.last_block().unwrap() >= target {
             return;
         }
         assert!(
@@ -285,8 +262,7 @@ async fn test_fetch_chain_info_connection_refused() {
     let port = listener.local_addr().unwrap().port();
     drop(listener);
 
-    let result =
-        samp_mirror::indexer::fetch_chain_info(&format!("ws://127.0.0.1:{port}")).await;
+    let result = samp_mirror::indexer::fetch_chain_info(&format!("ws://127.0.0.1:{port}")).await;
     assert!(result.is_err());
 }
 
@@ -333,9 +309,8 @@ async fn test_run_inner_catch_up_and_subscribe() {
     let (db, _dir) = temp_db();
     let db2 = db.clone();
     let url = mock.url.clone();
-    let handle = tokio::spawn(async move {
-        samp_mirror::indexer::run_inner(&url, &db2, 42, 1).await
-    });
+    let handle =
+        tokio::spawn(async move { samp_mirror::indexer::run_inner(&url, &db2, 42, 1).await });
 
     wait_for_block(&db, 6, 10).await;
     handle.abort();
@@ -375,9 +350,8 @@ async fn test_run_inner_subscription_only() {
 
     let db2 = db.clone();
     let url = mock.url.clone();
-    let handle = tokio::spawn(async move {
-        samp_mirror::indexer::run_inner(&url, &db2, 42, 1).await
-    });
+    let handle =
+        tokio::spawn(async move { samp_mirror::indexer::run_inner(&url, &db2, 42, 1).await });
 
     wait_for_block(&db, 101, 10).await;
     handle.abort();
@@ -418,9 +392,8 @@ async fn test_run_inner_resume_from_existing() {
 
     let db2 = db.clone();
     let url = mock.url.clone();
-    let handle = tokio::spawn(async move {
-        samp_mirror::indexer::run_inner(&url, &db2, 42, 1).await
-    });
+    let handle =
+        tokio::spawn(async move { samp_mirror::indexer::run_inner(&url, &db2, 42, 1).await });
 
     wait_for_block(&db, 53, 10).await;
     handle.abort();
@@ -453,9 +426,8 @@ async fn test_run_inner_rpc_error_recovery() {
     let (db, _dir) = temp_db();
     let db2 = db.clone();
     let url = mock.url.clone();
-    let handle = tokio::spawn(async move {
-        samp_mirror::indexer::run_inner(&url, &db2, 42, 1).await
-    });
+    let handle =
+        tokio::spawn(async move { samp_mirror::indexer::run_inner(&url, &db2, 42, 1).await });
 
     wait_for_block(&db, 3, 10).await;
     handle.abort();
@@ -487,9 +459,8 @@ async fn test_run_inner_many_blocks_pipeline_increase() {
     let (db, _dir) = temp_db();
     let db2 = db.clone();
     let url = mock.url.clone();
-    let handle = tokio::spawn(async move {
-        samp_mirror::indexer::run_inner(&url, &db2, 42, 1).await
-    });
+    let handle =
+        tokio::spawn(async move { samp_mirror::indexer::run_inner(&url, &db2, 42, 1).await });
 
     wait_for_block(&db, 110, 30).await;
     handle.abort();
@@ -519,9 +490,8 @@ async fn test_run_inner_log_at_block_1000() {
     let (db, _dir) = temp_db();
     let db2 = db.clone();
     let url = mock.url.clone();
-    let handle = tokio::spawn(async move {
-        samp_mirror::indexer::run_inner(&url, &db2, 42, 999).await
-    });
+    let handle =
+        tokio::spawn(async move { samp_mirror::indexer::run_inner(&url, &db2, 42, 999).await });
 
     wait_for_block(&db, 1001, 10).await;
     handle.abort();
@@ -548,9 +518,7 @@ async fn test_run_reconnect_loop() {
     let (db, _dir) = temp_db();
     let db2 = db.clone();
     let url = mock.url.clone();
-    let handle = tokio::spawn(async move {
-        samp_mirror::indexer::run(url, db2, 42, 1).await
-    });
+    let handle = tokio::spawn(async move { samp_mirror::indexer::run(url, db2, 42, 1).await });
 
     wait_for_block(&db, 1, 10).await;
     handle.abort();
@@ -650,18 +618,15 @@ async fn test_run_inner_websocket_close_with_ping() {
             match method {
                 "chain_getHeader" => {
                     let resp = json!({"jsonrpc":"2.0","id":id,"result":{"number":"0x0"}});
-                    let _ =
-                        write.send(WsMessage::Text(resp.to_string().into())).await;
+                    let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
                 }
                 "chain_subscribeNewHeads" => {
                     let resp = json!({"jsonrpc":"2.0","id":id,"result":"sub_1"});
-                    let _ =
-                        write.send(WsMessage::Text(resp.to_string().into())).await;
+                    let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
                 }
                 "chain_getBlock" => {
                     let resp = json!({"jsonrpc":"2.0","id":id,"result":null});
-                    let _ =
-                        write.send(WsMessage::Text(resp.to_string().into())).await;
+                    let _ = write.send(WsMessage::Text(resp.to_string().into())).await;
                     let _ = write.send(WsMessage::Ping(vec![].into())).await;
                     break;
                 }
@@ -674,4 +639,3 @@ async fn test_run_inner_websocket_close_with_ping() {
     let result = samp_mirror::indexer::run_inner(&url, &db, 42, 1).await;
     assert!(result.is_err());
 }
-
