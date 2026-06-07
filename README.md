@@ -66,17 +66,13 @@ All list endpoints accept `?after=N` to return only remarks from blocks after N.
 
 ### `GET /v1/channels`
 
-All channel creation remarks (`0x13`).
+Hints for channel creation remarks (`0x13`).
 
 ```json
 [
   {
     "block": 100,
-    "index": 2,
-    "creator": "5Grw...",
-    "name": "general",
-    "description": "General discussion",
-    "timestamp": 1775344320
+    "index": 2
   }
 ]
 ```
@@ -89,10 +85,7 @@ Messages for a specific channel (`0x14`).
 [
   {
     "block": 150,
-    "index": 0,
-    "sender": "5FHn...",
-    "timestamp": 1775345000,
-    "remark": "14640000..."
+    "index": 0
   }
 ]
 ```
@@ -105,10 +98,7 @@ Remarks by content type.
 [
   {
     "block": 200,
-    "index": 1,
-    "sender": "5Grw...",
-    "timestamp": 1775346000,
-    "remark": "1132a1b2..."
+    "index": 1
   }
 ]
 ```
