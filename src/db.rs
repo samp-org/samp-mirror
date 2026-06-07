@@ -13,6 +13,14 @@ pub struct InsertRemark<'a> {
     pub channel_index: Option<u16>,
 }
 
+pub struct IndexedRemark {
+    pub ext_index: u16,
+    pub sender: String,
+    pub content_type: u8,
+    pub channel_block: Option<u32>,
+    pub channel_index: Option<u16>,
+}
+
 #[derive(serde::Serialize)]
 pub struct Hint {
     pub block: u32,
@@ -46,7 +54,12 @@ impl Db {
                 ext_index      INTEGER NOT NULL,
                 PRIMARY KEY (block_number, ext_index)
             );
-            DROP TABLE IF EXISTS sync_state;
+            CREATE TABLE IF NOT EXISTS sync_state (
+                id              INTEGER PRIMARY KEY CHECK (id = 1),
+                last_block      INTEGER NOT NULL
+            );
+            INSERT OR IGNORE INTO sync_state (id, last_block)
+            SELECT 1, COALESCE(MAX(block_number), 0) FROM remarks;
             CREATE INDEX IF NOT EXISTS idx_content_type ON remarks(content_type);
             CREATE INDEX IF NOT EXISTS idx_channel ON remarks(channel_block, channel_index);
             CREATE INDEX IF NOT EXISTS idx_sender ON remarks(sender);
@@ -57,14 +70,48 @@ impl Db {
         Db { conn }
     }
 
-    pub fn last_block(&self) -> u64 {
-        self.conn
-            .query_row(
-                "SELECT COALESCE(MAX(block_number), 0) FROM remarks",
-                [],
-                |row| row.get::<_, i64>(0).map(|v| v as u64),
-            )
-            .unwrap_or(0)
+    pub fn last_block(&self) -> rusqlite::Result<u64> {
+        self.conn.query_row(
+            "SELECT last_block FROM sync_state WHERE id = 1",
+            [],
+            |row| row.get::<_, u64>(0),
+        )
+    }
+
+    pub fn insert_indexed_block(
+        &mut self,
+        block_number: u32,
+        remarks: &[IndexedRemark],
+        channels: &[u16],
+    ) -> rusqlite::Result<()> {
+        let tx = self.conn.transaction()?;
+        for r in remarks {
+            tx.execute(
+                "INSERT OR IGNORE INTO remarks
+                 (block_number, ext_index, content_type, sender, channel_block, channel_index)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    block_number,
+                    r.ext_index,
+                    r.content_type,
+                    r.sender,
+                    r.channel_block,
+                    r.channel_index,
+                ],
+            )?;
+        }
+        for &ext_index in channels {
+            tx.execute(
+                "INSERT OR IGNORE INTO channels (block_number, ext_index) VALUES (?1, ?2)",
+                params![block_number, ext_index],
+            )?;
+        }
+        tx.execute(
+            "INSERT INTO sync_state (id, last_block) VALUES (1, ?1)
+             ON CONFLICT(id) DO UPDATE SET last_block = MAX(last_block, excluded.last_block)",
+            params![block_number],
+        )?;
+        tx.commit()
     }
 
     pub fn insert_remark(&self, r: &InsertRemark) {

@@ -293,7 +293,7 @@ async fn start_mock_node(config: MockNodeConfig) -> MockNode {
 async fn wait_for_block(db: &Arc<Mutex<Db>>, target: u64, timeout_secs: u64) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
     loop {
-        if db.lock().await.last_block() >= target {
+        if db.lock().await.last_block().unwrap() >= target {
             return;
         }
         assert!(
