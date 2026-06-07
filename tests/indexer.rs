@@ -191,7 +191,7 @@ async fn test_process_block_channel_message() {
     let mut remark = vec![0x14];
     remark.extend_from_slice(&100u32.to_le_bytes()); // channel_block
     remark.extend_from_slice(&2u16.to_le_bytes()); // channel_index
-    // reply_to + continues block refs (6 bytes each)
+                                                   // reply_to + continues block refs (6 bytes each)
     remark.extend_from_slice(&[0u8; 6]); // reply_to
     remark.extend_from_slice(&[0u8; 6]); // continues
     remark.extend_from_slice(b"msg");

@@ -1,8 +1,8 @@
 use axum::{
-    Json, Router,
     extract::{Path, Query, State},
     http::StatusCode,
     routing::get,
+    Json, Router,
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;

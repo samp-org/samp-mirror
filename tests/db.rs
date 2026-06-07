@@ -145,7 +145,6 @@ fn test_last_block_after_inserts() {
         db.insert_indexed_block(
             block,
             &[IndexedRemark {
-                block_number: block,
                 ext_index: idx,
                 sender: sender.to_string(),
                 content_type: 0x10,

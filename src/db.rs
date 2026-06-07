@@ -1,4 +1,4 @@
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 
 pub struct Db {
     conn: Connection,
@@ -14,7 +14,6 @@ pub struct InsertRemark<'a> {
 }
 
 pub struct IndexedRemark {
-    pub block_number: u32,
     pub ext_index: u16,
     pub sender: String,
     pub content_type: u8,
@@ -83,7 +82,7 @@ impl Db {
         &mut self,
         block_number: u32,
         remarks: &[IndexedRemark],
-        channels: &[(u32, u16)],
+        channels: &[u16],
     ) -> rusqlite::Result<()> {
         let tx = self.conn.transaction()?;
         for r in remarks {
@@ -92,7 +91,7 @@ impl Db {
                  (block_number, ext_index, content_type, sender, channel_block, channel_index)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
-                    r.block_number,
+                    block_number,
                     r.ext_index,
                     r.content_type,
                     r.sender,
@@ -101,7 +100,7 @@ impl Db {
                 ],
             )?;
         }
-        for &(block_number, ext_index) in channels {
+        for &ext_index in channels {
             tx.execute(
                 "INSERT OR IGNORE INTO channels (block_number, ext_index) VALUES (?1, ?2)",
                 params![block_number, ext_index],

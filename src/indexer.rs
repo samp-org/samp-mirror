@@ -1,5 +1,5 @@
 use futures_util::{SinkExt, StreamExt};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -408,7 +408,6 @@ pub async fn process_block(
             .map_err(|e| format!("invalid extrinsic index: {e}"))?
             .get();
         remarks.push(IndexedRemark {
-            block_number: block_number_u32,
             ext_index: ext_index_u16,
             sender: sender_ss58,
             content_type,
@@ -416,7 +415,7 @@ pub async fn process_block(
             channel_index,
         });
         if content_type & 0x0F == 0x03 {
-            channels.push((block_number_u32, ext_index_u16));
+            channels.push(ext_index_u16);
         }
         count += 1;
     }

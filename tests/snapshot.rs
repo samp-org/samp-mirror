@@ -10,14 +10,13 @@ fn test_snapshot_roundtrip() {
     db.insert_indexed_block(
         100,
         &[IndexedRemark {
-            block_number: 100,
             ext_index: 1,
             sender: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY".to_string(),
             content_type: 0x10,
             channel_block: None,
             channel_index: None,
         }],
-        &[(200, 3)],
+        &[3],
     )
     .unwrap();
     drop(db);
@@ -36,7 +35,8 @@ fn test_snapshot_roundtrip() {
     assert_eq!(extracted_db.last_block().unwrap(), 100);
     let channels = extracted_db.channels();
     assert_eq!(channels.len(), 1);
-    assert_eq!(channels[0].block, 200);
+    assert_eq!(channels[0].block, 100);
+    assert_eq!(channels[0].index, 3);
 }
 
 #[test]
