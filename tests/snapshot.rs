@@ -18,11 +18,8 @@ fn test_snapshot_roundtrip() {
     db.insert_channel(200, 3);
     drop(db);
 
-    let size = samp_mirror::db::snapshot(
-        db_path.to_str().unwrap(),
-        output_path.to_str().unwrap(),
-    )
-    .unwrap();
+    let size = samp_mirror::db::snapshot(db_path.to_str().unwrap(), output_path.to_str().unwrap())
+        .unwrap();
     assert!(size > 0);
 
     let extract_dir = dir.path().join("extracted");

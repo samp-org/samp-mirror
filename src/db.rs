@@ -93,7 +93,9 @@ impl Db {
     pub fn channels(&self) -> Vec<Hint> {
         let mut stmt = self
             .conn
-            .prepare("SELECT block_number, ext_index FROM channels ORDER BY block_number, ext_index")
+            .prepare(
+                "SELECT block_number, ext_index FROM channels ORDER BY block_number, ext_index",
+            )
             .unwrap();
         stmt.query_map([], |row| {
             Ok(Hint {
@@ -177,8 +179,7 @@ pub fn snapshot(db_path: &str, output: &str) -> Result<u64, String> {
     let src = rusqlite::Connection::open(db_path).map_err(|e| format!("open source: {e}"))?;
     let tmp = format!("{db_path}.snapshot");
     {
-        let mut dst =
-            rusqlite::Connection::open(&tmp).map_err(|e| format!("open dest: {e}"))?;
+        let mut dst = rusqlite::Connection::open(&tmp).map_err(|e| format!("open dest: {e}"))?;
         let backup = rusqlite::backup::Backup::new(&src, &mut dst)
             .map_err(|e| format!("init backup: {e}"))?;
         backup

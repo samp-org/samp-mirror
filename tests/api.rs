@@ -131,7 +131,7 @@ async fn test_remarks_by_sender() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri(&format!("/v1/remarks?sender={sender}&after=0"))
+                .uri(format!("/v1/remarks?sender={sender}&after=0"))
                 .body(Body::empty())
                 .unwrap(),
         )
